@@ -27,16 +27,24 @@ public class Blob : MonoBehaviour
     public Color fillColor = Color.white;
 
     [Header("Scanline")]
-    public float scanlineLayersPerSecond = 4f;
+    public float scanlineLayersPerSecond = 2f;
     public ScanlineShape scanlineShape = ScanlineShape.Cylinder;
-    public Vector2 scanlineShapeScale = Vector2.one;
+    [Range(0f, 1f)]
+    public float scanlineShapeScaleX = 1f;
+    [Range(0f, 1f)]
+    public float scanlineShapeScaleZ = 1f;
+    [Range(-180f, 180f)]
     public float scanlineShapeRotationDegrees = 0f;
+    public Transform scanlineCubePreview;
+    public Transform scanlineCylinderPreview;
+    public float scanlinePreviewScale = 1f;
 
     private float[,,] voxels;
     private Color[,,] colors;
     private Mesh mesh;
     private MeshFilter meshFilter;
     private Coroutine scanlineRoutine;
+    private int scanlineCurrentLayer = -1;
     private Vector3Int lastValidatedSize;
     private float lastValidatedVoxelSize = -1f;
     private float lastValidatedIsoLevel = -1f;
@@ -339,6 +347,19 @@ public class Blob : MonoBehaviour
         meshFilter = GetComponent<MeshFilter>();
         EnsureMesh();
         EnsureGrid();
+        HideScanlinePreviews();
+    }
+
+    private void Update()
+    {
+        if (scanlineRoutine == null || scanlineCurrentLayer < 0)
+        {
+            return;
+        }
+
+        Vector2 halfExtents = GetScanlineHalfExtents();
+        Vector2 center = new Vector2((size.x - 1) * 0.5f, (size.z - 1) * 0.5f);
+        UpdateScanlinePreview(scanlineCurrentLayer, center, halfExtents);
     }
 
     private void Start()
@@ -366,10 +387,9 @@ public class Blob : MonoBehaviour
         voxelSize = Mathf.Max(0.01f, voxelSize);
         isoLevel = Mathf.Clamp01(isoLevel);
         scanlineLayersPerSecond = Mathf.Max(0.01f, scanlineLayersPerSecond);
-        scanlineShapeScale = new Vector2(
-            Mathf.Clamp01(scanlineShapeScale.x),
-            Mathf.Clamp01(scanlineShapeScale.y)
-        );
+        scanlineShapeScaleX = Mathf.Clamp01(scanlineShapeScaleX);
+        scanlineShapeScaleZ = Mathf.Clamp01(scanlineShapeScaleZ);
+        scanlinePreviewScale = Mathf.Max(0.01f, scanlinePreviewScale);
 
         bool sizeChanged = size != lastValidatedSize;
         bool meshAffectingChanged =
@@ -517,10 +537,8 @@ public class Blob : MonoBehaviour
     public void SetScanlineShape(ScanlineShape shape, Vector2 xzScale)
     {
         scanlineShape = shape;
-        scanlineShapeScale = new Vector2(
-            Mathf.Clamp01(xzScale.x),
-            Mathf.Clamp01(xzScale.y)
-        );
+        scanlineShapeScaleX = Mathf.Clamp01(xzScale.x);
+        scanlineShapeScaleZ = Mathf.Clamp01(xzScale.y);
     }
 
     public void SetVoxel(int x, int y, int z, bool filled)
@@ -728,12 +746,15 @@ public class Blob : MonoBehaviour
             Color layerColor = new Color(Random.value, Random.value, Random.value, 1f);
             Vector2 halfExtents = GetScanlineHalfExtents();
             Vector2 center = new Vector2((size.x - 1) * 0.5f, (size.z - 1) * 0.5f);
+            scanlineCurrentLayer = y;
+            UpdateScanlinePreview(y, center, halfExtents);
+            bool zeroScale = scanlineShapeScaleX <= 0f || scanlineShapeScaleZ <= 0f;
             for (int x = 0; x < size.x; x++)
             {
                 for (int z = 0; z < size.z; z++)
                 {
                     colors[x, y, z] = layerColor;
-                    voxels[x, y, z] = GetScanlineVoxelValue(x, z, center, halfExtents);
+                    voxels[x, y, z] = zeroScale ? 0f : GetScanlineVoxelValue(x, z, center, halfExtents);
                 }
             }
 
@@ -742,13 +763,60 @@ public class Blob : MonoBehaviour
         }
 
         scanlineRoutine = null;
+        scanlineCurrentLayer = -1;
+        HideScanlinePreviews();
     }
 
     private Vector2 GetScanlineHalfExtents()
     {
-        float halfX = Mathf.Max(0.5f, (size.x - 1) * 0.5f * scanlineShapeScale.x);
-        float halfZ = Mathf.Max(0.5f, (size.z - 1) * 0.5f * scanlineShapeScale.y);
+        float halfX = Mathf.Max(0.5f, (size.x - 1) * 0.5f * scanlineShapeScaleX);
+        float halfZ = Mathf.Max(0.5f, (size.z - 1) * 0.5f * scanlineShapeScaleZ);
         return new Vector2(halfX, halfZ);
+    }
+
+    private void UpdateScanlinePreview(int y, Vector2 center, Vector2 halfExtents)
+    {
+        Transform cube = scanlineCubePreview;
+        Transform cylinder = scanlineCylinderPreview;
+
+        if (cube != null)
+        {
+            cube.gameObject.SetActive(scanlineShape == ScanlineShape.Cube);
+        }
+
+        if (cylinder != null)
+        {
+            cylinder.gameObject.SetActive(scanlineShape == ScanlineShape.Cylinder);
+        }
+
+        Transform active = scanlineShape == ScanlineShape.Cube ? cube : cylinder;
+        if (active == null)
+        {
+            return;
+        }
+
+        Vector3 localPosition = new Vector3(center.x, y, center.y) * voxelSize;
+        active.position = transform.TransformPoint(localPosition);
+        active.rotation = transform.rotation * Quaternion.Euler(0f, scanlineShapeRotationDegrees, 0f);
+        float scale = scanlinePreviewScale;
+        active.localScale = new Vector3(
+            halfExtents.x * 2f * voxelSize * scale,
+            voxelSize * scale,
+            halfExtents.y * 2f * voxelSize * scale
+        );
+    }
+
+    private void HideScanlinePreviews()
+    {
+        if (scanlineCubePreview != null)
+        {
+            scanlineCubePreview.gameObject.SetActive(false);
+        }
+
+        if (scanlineCylinderPreview != null)
+        {
+            scanlineCylinderPreview.gameObject.SetActive(false);
+        }
     }
 
     private float GetScanlineVoxelValue(int x, int z, Vector2 center, Vector2 halfExtents)

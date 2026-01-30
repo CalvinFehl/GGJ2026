@@ -421,7 +421,7 @@ public class Blob : MonoBehaviour
                 for (int z = 0; z < size.z; z++)
                 {
                     voxels[x, y, z] = value;
-                    colors[x, y, z] = fillColor;
+                    colors[x, y, z] = new Color(Random.value, Random.value, Random.value, 1f);
                 }
             }
         }
@@ -513,18 +513,18 @@ public class Blob : MonoBehaviour
         var edgeColor = new Color[12];
         const float vertexKeyPrecision = 10000f;
 
-        for (int x = 0; x < size.x - 1; x++)
+        for (int x = -1; x < size.x; x++)
         {
-            for (int y = 0; y < size.y - 1; y++)
+            for (int y = -1; y < size.y; y++)
             {
-                for (int z = 0; z < size.z - 1; z++)
+                for (int z = -1; z < size.z; z++)
                 {
                     for (int i = 0; i < 8; i++)
                     {
                         int vx = x + VertexOffset[i, 0];
                         int vy = y + VertexOffset[i, 1];
                         int vz = z + VertexOffset[i, 2];
-                        cube[i] = voxels[vx, vy, vz];
+                        cube[i] = GetVoxelValueSafe(vx, vy, vz);
                     }
 
                     int flagIndex = 0;
@@ -556,8 +556,8 @@ public class Blob : MonoBehaviour
                         Vector3 p0 = basePos + new Vector3(VertexOffset[v0, 0], VertexOffset[v0, 1], VertexOffset[v0, 2]);
                         Vector3 p1 = basePos + new Vector3(VertexOffset[v1, 0], VertexOffset[v1, 1], VertexOffset[v1, 2]);
                         edgeVertex[i] = Vector3.Lerp(p0, p1, offset) * voxelSize;
-                        Color c0 = colors[x + VertexOffset[v0, 0], y + VertexOffset[v0, 1], z + VertexOffset[v0, 2]];
-                        Color c1 = colors[x + VertexOffset[v1, 0], y + VertexOffset[v1, 1], z + VertexOffset[v1, 2]];
+                        Color c0 = GetColorSafe(x + VertexOffset[v0, 0], y + VertexOffset[v0, 1], z + VertexOffset[v0, 2]);
+                        Color c1 = GetColorSafe(x + VertexOffset[v1, 0], y + VertexOffset[v1, 1], z + VertexOffset[v1, 2]);
                         edgeColor[i] = Color.Lerp(c0, c1, offset);
                     }
 
@@ -701,9 +701,15 @@ public class Blob : MonoBehaviour
             return 0f;
         }
 
-        float fx = Mathf.Clamp(x, 0f, size.x - 1f);
-        float fy = Mathf.Clamp(y, 0f, size.y - 1f);
-        float fz = Mathf.Clamp(z, 0f, size.z - 1f);
+        if (x < 0f || y < 0f || z < 0f ||
+            x > size.x - 1f || y > size.y - 1f || z > size.z - 1f)
+        {
+            return 0f;
+        }
+
+        float fx = x;
+        float fy = y;
+        float fz = z;
 
         int x0 = Mathf.FloorToInt(fx);
         int y0 = Mathf.FloorToInt(fy);
@@ -732,6 +738,26 @@ public class Blob : MonoBehaviour
         float c0 = Mathf.Lerp(c00, c10, ty);
         float c1 = Mathf.Lerp(c01, c11, ty);
         return Mathf.Lerp(c0, c1, tz);
+    }
+
+    private float GetVoxelValueSafe(int x, int y, int z)
+    {
+        if (!InBounds(x, y, z))
+        {
+            return 0f;
+        }
+
+        return voxels[x, y, z];
+    }
+
+    private Color GetColorSafe(int x, int y, int z)
+    {
+        if (colors == null || !InBounds(x, y, z))
+        {
+            return Color.black;
+        }
+
+        return colors[x, y, z];
     }
 
     private Vector3 ComputeNormal(Vector3 position)

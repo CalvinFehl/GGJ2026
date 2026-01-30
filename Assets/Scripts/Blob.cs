@@ -622,7 +622,7 @@ public class Blob : MonoBehaviour
                         continue;
                     }
 
-                    Vector3 basePos = new Vector3(x, y, z);
+                    Vector3 basePos = new Vector3(x, y, z) - GetGridCenter();
                     for (int i = 0; i < 12; i++)
                     {
                         if ((edgeFlags & (1 << i)) == 0)
@@ -795,7 +795,8 @@ public class Blob : MonoBehaviour
             return;
         }
 
-        Vector3 localPosition = new Vector3(center.x, y, center.y) * voxelSize;
+        Vector3 localPosition = new Vector3(center.x, y, center.y) - GetGridCenter();
+        localPosition *= voxelSize;
         active.position = transform.TransformPoint(localPosition);
         active.rotation = transform.rotation * Quaternion.Euler(0f, scanlineShapeRotationDegrees, 0f);
         float scale = scanlinePreviewScale;
@@ -952,7 +953,7 @@ public class Blob : MonoBehaviour
     private Vector3 ComputeNormal(Vector3 position)
     {
         float safeVoxelSize = Mathf.Max(0.0001f, voxelSize);
-        Vector3 p = position / safeVoxelSize;
+        Vector3 p = position / safeVoxelSize + GetGridCenter();
         const float epsilon = 0.5f;
         float dx = SampleField(p.x + epsilon, p.y, p.z) - SampleField(p.x - epsilon, p.y, p.z);
         float dy = SampleField(p.x, p.y + epsilon, p.z) - SampleField(p.x, p.y - epsilon, p.z);
@@ -964,6 +965,11 @@ public class Blob : MonoBehaviour
         }
 
         return -n.normalized;
+    }
+
+    private Vector3 GetGridCenter()
+    {
+        return new Vector3(size.x - 1, size.y - 1, size.z - 1) * 0.5f;
     }
 
     private readonly struct VertexKey

@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -5,6 +6,12 @@ using UnityEngine;
 [RequireComponent(typeof(MeshRenderer))]
 public class Blob : MonoBehaviour
 {
+    public enum ScanlineShape
+    {
+        Cube,
+        Cylinder
+    }
+
     public const int MaxSize = 64;
 
     [Header("Voxel Grid")]
@@ -19,10 +26,20 @@ public class Blob : MonoBehaviour
     public bool regenerateOnValidate = true;
     public Color fillColor = Color.white;
 
+    [Header("Scanline")]
+    public float scanlineLayersPerSecond = 4f;
+    public ScanlineShape scanlineShape = ScanlineShape.Cylinder;
+    public Vector2 scanlineShapeScale = Vector2.one;
+    public float scanlineShapeRotationDegrees = 0f;
+
     private float[,,] voxels;
     private Color[,,] colors;
     private Mesh mesh;
     private MeshFilter meshFilter;
+    private Coroutine scanlineRoutine;
+    private Vector3Int lastValidatedSize;
+    private float lastValidatedVoxelSize = -1f;
+    private float lastValidatedIsoLevel = -1f;
 
     private static readonly int[,] VertexOffset =
     {
@@ -348,13 +365,34 @@ public class Blob : MonoBehaviour
         );
         voxelSize = Mathf.Max(0.01f, voxelSize);
         isoLevel = Mathf.Clamp01(isoLevel);
+        scanlineLayersPerSecond = Mathf.Max(0.01f, scanlineLayersPerSecond);
+        scanlineShapeScale = new Vector2(
+            Mathf.Clamp01(scanlineShapeScale.x),
+            Mathf.Clamp01(scanlineShapeScale.y)
+        );
+
+        bool sizeChanged = size != lastValidatedSize;
+        bool meshAffectingChanged =
+            size != lastValidatedSize ||
+            !Mathf.Approximately(voxelSize, lastValidatedVoxelSize) ||
+            !Mathf.Approximately(isoLevel, lastValidatedIsoLevel);
+
+        lastValidatedSize = size;
+        lastValidatedVoxelSize = voxelSize;
+        lastValidatedIsoLevel = isoLevel;
+
         if (!Application.isPlaying)
         {
             return;
         }
 
+        if (!meshAffectingChanged)
+        {
+            return;
+        }
+
         EnsureGrid();
-        if (regenerateOnValidate && generateOnStart)
+        if (sizeChanged && regenerateOnValidate && generateOnStart)
         {
             if (fillSolidOnStart)
             {
@@ -459,6 +497,30 @@ public class Blob : MonoBehaviour
                 }
             }
         }
+    }
+
+    public void StartScanline()
+    {
+        if (!Application.isPlaying)
+        {
+            return;
+        }
+
+        if (scanlineRoutine != null)
+        {
+            return;
+        }
+
+        scanlineRoutine = StartCoroutine(ScanlineRoutine());
+    }
+
+    public void SetScanlineShape(ScanlineShape shape, Vector2 xzScale)
+    {
+        scanlineShape = shape;
+        scanlineShapeScale = new Vector2(
+            Mathf.Clamp01(xzScale.x),
+            Mathf.Clamp01(xzScale.y)
+        );
     }
 
     public void SetVoxel(int x, int y, int z, bool filled)
@@ -654,6 +716,65 @@ public class Blob : MonoBehaviour
 
         voxels = new float[size.x, size.y, size.z];
         colors = new Color[size.x, size.y, size.z];
+    }
+
+    private IEnumerator ScanlineRoutine()
+    {
+        EnsureGrid();
+        float delay = 1f / Mathf.Max(0.01f, scanlineLayersPerSecond);
+
+        for (int y = 0; y < size.y; y++)
+        {
+            Color layerColor = new Color(Random.value, Random.value, Random.value, 1f);
+            Vector2 halfExtents = GetScanlineHalfExtents();
+            Vector2 center = new Vector2((size.x - 1) * 0.5f, (size.z - 1) * 0.5f);
+            for (int x = 0; x < size.x; x++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    colors[x, y, z] = layerColor;
+                    voxels[x, y, z] = GetScanlineVoxelValue(x, z, center, halfExtents);
+                }
+            }
+
+            RebuildMesh();
+            yield return new WaitForSeconds(delay);
+        }
+
+        scanlineRoutine = null;
+    }
+
+    private Vector2 GetScanlineHalfExtents()
+    {
+        float halfX = Mathf.Max(0.5f, (size.x - 1) * 0.5f * scanlineShapeScale.x);
+        float halfZ = Mathf.Max(0.5f, (size.z - 1) * 0.5f * scanlineShapeScale.y);
+        return new Vector2(halfX, halfZ);
+    }
+
+    private float GetScanlineVoxelValue(int x, int z, Vector2 center, Vector2 halfExtents)
+    {
+        float dx = x - center.x;
+        float dz = z - center.y;
+        if (Mathf.Abs(scanlineShapeRotationDegrees) > 0.001f)
+        {
+            float radians = scanlineShapeRotationDegrees * Mathf.Deg2Rad;
+            float cos = Mathf.Cos(radians);
+            float sin = Mathf.Sin(radians);
+            float rx = dx * cos - dz * sin;
+            float rz = dx * sin + dz * cos;
+            dx = rx;
+            dz = rz;
+        }
+
+        if (scanlineShape == ScanlineShape.Cube)
+        {
+            return Mathf.Abs(dx) <= halfExtents.x && Mathf.Abs(dz) <= halfExtents.y ? 1f : 0f;
+        }
+
+        float nx = dx / halfExtents.x;
+        float nz = dz / halfExtents.y;
+        float distance = Mathf.Sqrt(nx * nx + nz * nz);
+        return Mathf.Clamp01(1f - distance);
     }
 
     private void EnsureMesh()

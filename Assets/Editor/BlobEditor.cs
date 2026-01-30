@@ -26,5 +26,14 @@ public class BlobEditor : Editor
             blob.RebuildMesh();
             EditorUtility.SetDirty(blob);
         }
+
+        GUILayout.Space(8f);
+
+        GUI.enabled = Application.isPlaying;
+        if (GUILayout.Button("Run Scanline"))
+        {
+            blob.StartScanline();
+        }
+        GUI.enabled = true;
     }
 }

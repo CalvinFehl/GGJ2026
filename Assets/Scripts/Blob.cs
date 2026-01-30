@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 [RequireComponent(typeof(MeshFilter))]
 [RequireComponent(typeof(MeshRenderer))]
@@ -39,6 +40,11 @@ public class Blob : MonoBehaviour
     public Transform scanlineCylinderPreview;
     public float scanlinePreviewScale = 1f;
 
+    [Header("Scanline Input")]
+    public float scanlineMouseScaleSensitivity = 0.002f;
+    public float scanlineScrollScaleSensitivity = 0.001f;
+    public float scanlinePauseBudgetSeconds = 5f;
+
     private float[,,] voxels;
     private Color[,,] colors;
     private Mesh mesh;
@@ -48,6 +54,10 @@ public class Blob : MonoBehaviour
     private Vector3Int lastValidatedSize;
     private float lastValidatedVoxelSize = -1f;
     private float lastValidatedIsoLevel = -1f;
+    private InputSystem_Actions inputActions;
+    private bool isRightMouseHeld;
+    private bool pauseHeld;
+    private float pauseBudgetRemaining;
 
     private static readonly int[,] VertexOffset =
     {
@@ -348,18 +358,92 @@ public class Blob : MonoBehaviour
         EnsureMesh();
         EnsureGrid();
         HideScanlinePreviews();
+        inputActions = new InputSystem_Actions();
     }
 
-    private void Update()
+    private void OnEnable()
     {
-        if (scanlineRoutine == null || scanlineCurrentLayer < 0)
+        if (inputActions == null)
+        {
+            inputActions = new InputSystem_Actions();
+        }
+
+        inputActions.Enable();
+        inputActions.Player.Jump.performed += OnJumpPerformed;
+        inputActions.Player.Jump.canceled += OnJumpCanceled;
+        inputActions.Player.Interact.started += OnToggleShape;
+        inputActions.UI.RightClick.performed += OnRightClickPerformed;
+        inputActions.UI.RightClick.canceled += OnRightClickCanceled;
+    }
+
+    private void OnDisable()
+    {
+        if (inputActions == null)
         {
             return;
         }
 
+        inputActions.Player.Jump.performed -= OnJumpPerformed;
+        inputActions.Player.Jump.canceled -= OnJumpCanceled;
+        inputActions.Player.Interact.started -= OnToggleShape;
+        inputActions.UI.RightClick.performed -= OnRightClickPerformed;
+        inputActions.UI.RightClick.canceled -= OnRightClickCanceled;
+        inputActions.Disable();
+    }
+
+    private void Update()
+    {
+        SyncRightMouseHeld();
+        HandleScanlineInput();
+        UpdateScanlinePreviewLive();
+    }
+
+    private void SyncRightMouseHeld()
+    {
+        if (Mouse.current == null)
+        {
+            return;
+        }
+
+        isRightMouseHeld = Mouse.current.rightButton.isPressed;
+    }
+
+    private void HandleScanlineInput()
+    {
+        if (!isRightMouseHeld || inputActions == null)
+        {
+            return;
+        }
+
+        Vector2 lookDelta = inputActions.Player.Look.ReadValue<Vector2>();
+        if (lookDelta != Vector2.zero)
+        {
+            scanlineShapeScaleX = Mathf.Clamp01(scanlineShapeScaleX + lookDelta.x * scanlineMouseScaleSensitivity);
+            scanlineShapeScaleZ = Mathf.Clamp01(scanlineShapeScaleZ + lookDelta.y * scanlineMouseScaleSensitivity);
+        }
+
+        Vector2 scroll = inputActions.UI.ScrollWheel.ReadValue<Vector2>();
+        if (scroll.y != 0f)
+        {
+            float delta = scroll.y * scanlineScrollScaleSensitivity;
+            scanlineShapeScaleX = Mathf.Clamp01(scanlineShapeScaleX + delta);
+            scanlineShapeScaleZ = Mathf.Clamp01(scanlineShapeScaleZ + delta);
+        }
+    }
+
+    private void UpdateScanlinePreviewLive()
+    {
+        bool showPreview = scanlineRoutine != null || isRightMouseHeld;
+        if (!showPreview)
+        {
+            HideScanlinePreviews();
+            return;
+        }
+
+        int layer = scanlineRoutine != null && scanlineCurrentLayer >= 0 ? scanlineCurrentLayer : 0;
         Vector2 halfExtents = GetScanlineHalfExtents();
         Vector2 center = new Vector2((size.x - 1) * 0.5f, (size.z - 1) * 0.5f);
-        UpdateScanlinePreview(scanlineCurrentLayer, center, halfExtents);
+        UpdateScanlinePreview(layer, center, halfExtents);
     }
 
     private void Start()
@@ -390,6 +474,9 @@ public class Blob : MonoBehaviour
         scanlineShapeScaleX = Mathf.Clamp01(scanlineShapeScaleX);
         scanlineShapeScaleZ = Mathf.Clamp01(scanlineShapeScaleZ);
         scanlinePreviewScale = Mathf.Max(0.01f, scanlinePreviewScale);
+        scanlineMouseScaleSensitivity = Mathf.Max(0f, scanlineMouseScaleSensitivity);
+        scanlineScrollScaleSensitivity = Mathf.Max(0f, scanlineScrollScaleSensitivity);
+        scanlinePauseBudgetSeconds = Mathf.Max(0f, scanlinePauseBudgetSeconds);
 
         bool sizeChanged = size != lastValidatedSize;
         bool meshAffectingChanged =
@@ -531,6 +618,7 @@ public class Blob : MonoBehaviour
             return;
         }
 
+        pauseBudgetRemaining = scanlinePauseBudgetSeconds;
         scanlineRoutine = StartCoroutine(ScanlineRoutine());
     }
 
@@ -759,12 +847,30 @@ public class Blob : MonoBehaviour
             }
 
             RebuildMesh();
-            yield return new WaitForSeconds(delay);
+            yield return WaitForScanlineDelay(delay);
         }
 
         scanlineRoutine = null;
         scanlineCurrentLayer = -1;
         HideScanlinePreviews();
+    }
+
+    private IEnumerator WaitForScanlineDelay(float delay)
+    {
+        float remaining = delay;
+        while (remaining > 0f)
+        {
+            if (pauseHeld && pauseBudgetRemaining > 0f)
+            {
+                float dt = Time.deltaTime;
+                pauseBudgetRemaining = Mathf.Max(0f, pauseBudgetRemaining - dt);
+                yield return null;
+                continue;
+            }
+
+            remaining -= Time.deltaTime;
+            yield return null;
+        }
     }
 
     private Vector2 GetScanlineHalfExtents()
@@ -818,6 +924,37 @@ public class Blob : MonoBehaviour
         {
             scanlineCylinderPreview.gameObject.SetActive(false);
         }
+    }
+
+    private void OnJumpPerformed(InputAction.CallbackContext context)
+    {
+        if (scanlineRoutine == null)
+        {
+            StartScanline();
+            return;
+        }
+
+        pauseHeld = true;
+    }
+
+    private void OnJumpCanceled(InputAction.CallbackContext context)
+    {
+        pauseHeld = false;
+    }
+
+    private void OnToggleShape(InputAction.CallbackContext context)
+    {
+        scanlineShape = scanlineShape == ScanlineShape.Cube ? ScanlineShape.Cylinder : ScanlineShape.Cube;
+    }
+
+    private void OnRightClickPerformed(InputAction.CallbackContext context)
+    {
+        isRightMouseHeld = true;
+    }
+
+    private void OnRightClickCanceled(InputAction.CallbackContext context)
+    {
+        isRightMouseHeld = false;
     }
 
     private float GetScanlineVoxelValue(int x, int z, Vector2 center, Vector2 halfExtents)

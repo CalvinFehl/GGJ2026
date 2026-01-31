@@ -117,8 +117,7 @@ public class PlayerController : MonoBehaviour
         }
 
         blob.ScanObjectToGrid(target);
-        blob.ApplyScanColorsToGrid();
-        blob.RebuildMesh();
+        blob.ApplyScanGridToMesh();
         float bestRotationDegrees;
         float score = blob.CompareToScanGrid(8, true, out bestRotationDegrees);
         Debug.Log($"Assimilate compare score: {score:F3} (best rotation {bestRotationDegrees:F1} deg) vs {target.name}");

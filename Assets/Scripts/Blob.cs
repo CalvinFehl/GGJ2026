@@ -51,6 +51,13 @@ public class Blob : MonoBehaviour
     [Header("Scan Grid")]
     public float scanDistanceMax = 2f;
     public GameObject scanTarget;
+    public bool scanUseMeshDistance = false;
+    public bool scanUseSurfaceVoxelization = false;
+    public bool scanUseRaycastToCenter = false;
+    [Min(0)]
+    public int scanSurfaceSealVoxels = 0;
+    [Range(0.05f, 1f)]
+    public float scanSurfaceThickness = 0.25f;
     public bool scanUseParallel = true;
 
     private float[,,] voxels;
@@ -683,12 +690,14 @@ public class Blob : MonoBehaviour
         Vector3[] vertices = meshTarget != null ? meshTarget.vertices : System.Array.Empty<Vector3>();
         bool hasVertexColors = vertexColors != null && vertexColors.Length == vertices.Length && vertices.Length > 0;
 
-        bool useMeshDistance = meshTarget != null && meshTarget.triangles != null && meshTarget.triangles.Length > 0;
+        bool canUseMeshDistance = meshTarget != null && meshTarget.triangles != null && meshTarget.triangles.Length > 0;
         MeshAccel meshAccel = new MeshAccel();
         int[] triVisit = null;
         int visitMark = 1;
 
-        Collider scanCollider = null;
+        Collider scanCollider = target.GetComponent<Collider>();
+        bool canUseCollider = scanCollider != null;
+        bool useMeshDistance = scanUseMeshDistance ? canUseMeshDistance : !canUseCollider && canUseMeshDistance;
         GameObject probeObject = null;
         SphereCollider probeCollider = null;
 
@@ -709,8 +718,7 @@ public class Blob : MonoBehaviour
         }
         else
         {
-            scanCollider = target.GetComponent<Collider>();
-            if (scanCollider == null)
+            if (!canUseCollider)
             {
                 return;
             }
@@ -722,14 +730,69 @@ public class Blob : MonoBehaviour
         }
         Vector3 gridCenter = GetGridCenter();
         Vector3 scanOffset = target.transform.position - transform.position;
-        Matrix4x4 blobToWorld = transform.localToWorldMatrix;
-        Matrix4x4 targetWorldToLocal = target.transform.worldToLocalMatrix;
+        Matrix4x4 blobToWorld = Matrix4x4
+            .TRS(transform.position, Quaternion.identity, transform.lossyScale);
+        Matrix4x4 blobWorldToLocal = blobToWorld.inverse;
+        Matrix4x4 targetWorldToLocal = Matrix4x4
+            .TRS(target.transform.position, Quaternion.identity, target.transform.lossyScale)
+            .inverse;
+        Matrix4x4 targetLocalToWorld = Matrix4x4
+            .TRS(target.transform.position, Quaternion.identity, target.transform.lossyScale);
+        Matrix4x4 targetLocalToWorldAligned = Matrix4x4
+            .TRS(transform.position, Quaternion.identity, target.transform.lossyScale);
         Vector3 targetScale = target.transform.lossyScale;
         float targetScaleFactor = Mathf.Max(
             Mathf.Abs(targetScale.x),
             Mathf.Abs(targetScale.y),
             Mathf.Abs(targetScale.z)
         );
+
+        if (scanUseRaycastToCenter)
+        {
+            if (!canUseCollider)
+            {
+                return;
+            }
+
+            ScanObjectToGridRaycastToCenter(
+                scanCollider,
+                vertices,
+                vertexColors,
+                hasVertexColors,
+                fallbackColor,
+                gridCenter,
+                blobToWorld,
+                targetWorldToLocal,
+                scanOffset
+            );
+            return;
+        }
+        Bounds meshBounds = default;
+        float localMaxDistanceSq = 0f;
+        if (useMeshDistance)
+        {
+            meshBounds = meshTarget.bounds;
+            float localMaxDistance = scanDistanceMax / Mathf.Max(0.0001f, targetScaleFactor);
+            localMaxDistanceSq = localMaxDistance * localMaxDistance;
+        }
+
+        if (useMeshDistance && scanUseSurfaceVoxelization)
+        {
+            ScanObjectToGridSurfaceVoxelization(
+                meshTarget,
+                vertices,
+                vertexColors,
+                hasVertexColors,
+                fallbackColor,
+                gridCenter,
+                blobToWorld,
+                blobWorldToLocal,
+                targetWorldToLocal,
+                targetLocalToWorldAligned,
+                scanOffset
+            );
+            return;
+        }
 
         if (useMeshDistance && scanUseParallel)
         {
@@ -749,6 +812,12 @@ public class Blob : MonoBehaviour
                         Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
                         Vector3 scanWorld = world + scanOffset;
                         Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                        if (meshBounds.SqrDistance(scanLocal) > localMaxDistanceSq)
+                        {
+                            scanVoxels[x, y, z] = 0f;
+                            scanColors[x, y, z] = fallbackColor;
+                            continue;
+                        }
                         float signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisitThread, ref visitMarkThread);
                         signedDistance *= targetScaleFactor;
                         float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
@@ -778,6 +847,12 @@ public class Blob : MonoBehaviour
                         if (useMeshDistance)
                         {
                             Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                            if (meshBounds.SqrDistance(scanLocal) > localMaxDistanceSq)
+                            {
+                                scanVoxels[x, y, z] = 0f;
+                                scanColors[x, y, z] = fallbackColor;
+                                continue;
+                            }
                             signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisit, ref visitMark);
                             signedDistance *= targetScaleFactor;
                         }
@@ -1029,9 +1104,29 @@ public class Blob : MonoBehaviour
         mesh.SetColors(vertexColors);
         if (useGradientNormals && vertexNormals != null)
         {
+            Vector3[] triangleNormalSum = new Vector3[vertices.Count];
+            for (int i = 0; i < triangles.Count; i += 3)
+            {
+                int ia = triangles[i];
+                int ib = triangles[i + 1];
+                int ic = triangles[i + 2];
+                Vector3 a = vertices[ia];
+                Vector3 b = vertices[ib];
+                Vector3 c = vertices[ic];
+                Vector3 n = Vector3.Cross(b - a, c - a);
+                triangleNormalSum[ia] += n;
+                triangleNormalSum[ib] += n;
+                triangleNormalSum[ic] += n;
+            }
+
             for (int i = 0; i < vertexNormals.Count; i++)
             {
                 Vector3 n = vertexNormals[i];
+                if (triangleNormalSum[i].sqrMagnitude > 0.000001f &&
+                    Vector3.Dot(n, triangleNormalSum[i]) < 0f)
+                {
+                    n = -n;
+                }
                 vertexNormals[i] = n.sqrMagnitude > 0.000001f ? n.normalized : Vector3.up;
             }
             mesh.SetNormals(vertexNormals);
@@ -1361,6 +1456,14 @@ public class Blob : MonoBehaviour
         return Mathf.Lerp(c0, c1, tz);
     }
 
+    private float SampleFieldClamped(float x, float y, float z)
+    {
+        float cx = Mathf.Clamp(x, 0f, size.x - 1f);
+        float cy = Mathf.Clamp(y, 0f, size.y - 1f);
+        float cz = Mathf.Clamp(z, 0f, size.z - 1f);
+        return SampleField(cx, cy, cz);
+    }
+
     private float SampleScanField(float x, float y, float z)
     {
         if (scanVoxels == null)
@@ -1583,9 +1686,39 @@ public class Blob : MonoBehaviour
         float safeVoxelSize = Mathf.Max(0.0001f, voxelSize);
         Vector3 p = position / safeVoxelSize + GetGridCenter();
         const float epsilon = 0.5f;
-        float dx = SampleField(p.x + epsilon, p.y, p.z) - SampleField(p.x - epsilon, p.y, p.z);
-        float dy = SampleField(p.x, p.y + epsilon, p.z) - SampleField(p.x, p.y - epsilon, p.z);
-        float dz = SampleField(p.x, p.y, p.z + epsilon) - SampleField(p.x, p.y, p.z - epsilon);
+        float maxX = size.x - 1f;
+        float maxY = size.y - 1f;
+        float maxZ = size.z - 1f;
+
+        float dx;
+        if (p.x - epsilon < 0f || p.x + epsilon > maxX)
+        {
+            dx = SampleFieldClamped(p.x + epsilon, p.y, p.z) - SampleFieldClamped(p.x - epsilon, p.y, p.z);
+        }
+        else
+        {
+            dx = SampleField(p.x + epsilon, p.y, p.z) - SampleField(p.x - epsilon, p.y, p.z);
+        }
+
+        float dy;
+        if (p.y - epsilon < 0f || p.y + epsilon > maxY)
+        {
+            dy = SampleFieldClamped(p.x, p.y + epsilon, p.z) - SampleFieldClamped(p.x, p.y - epsilon, p.z);
+        }
+        else
+        {
+            dy = SampleField(p.x, p.y + epsilon, p.z) - SampleField(p.x, p.y - epsilon, p.z);
+        }
+
+        float dz;
+        if (p.z - epsilon < 0f || p.z + epsilon > maxZ)
+        {
+            dz = SampleFieldClamped(p.x, p.y, p.z + epsilon) - SampleFieldClamped(p.x, p.y, p.z - epsilon);
+        }
+        else
+        {
+            dz = SampleField(p.x, p.y, p.z + epsilon) - SampleField(p.x, p.y, p.z - epsilon);
+        }
         Vector3 n = new Vector3(dx, dy, dz);
         if (n.sqrMagnitude < 0.000001f)
         {
@@ -2438,6 +2571,347 @@ public class Blob : MonoBehaviour
         }
 
         return vertexColors[bestIndex];
+    }
+
+    private void ScanObjectToGridRaycastToCenter(
+        Collider targetCollider,
+        Vector3[] vertices,
+        Color[] vertexColors,
+        bool hasVertexColors,
+        Color fallbackColor,
+        Vector3 gridCenter,
+        Matrix4x4 blobToWorld,
+        Matrix4x4 targetWorldToLocal,
+        Vector3 scanOffset)
+    {
+        Bounds bounds = targetCollider.bounds;
+        float epsilon = Mathf.Max(0.0001f, voxelSize * 0.05f);
+        Vector3 insidePoint = GetInsidePoint(targetCollider, bounds, epsilon);
+        float rayExtra = bounds.extents.magnitude * 2f;
+
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    Vector3 local = new Vector3(x, y, z) - gridCenter;
+                    Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
+                    Vector3 scanWorld = world + scanOffset;
+
+                    Vector3 toInside = insidePoint - scanWorld;
+                    float distance = toInside.magnitude;
+                    bool inside = distance <= epsilon;
+                    if (!inside && distance > epsilon)
+                    {
+                        Vector3 dir = toInside / distance;
+                        float maxDistance = distance + rayExtra;
+                        bool hit = targetCollider.Raycast(new Ray(scanWorld, dir), out RaycastHit hitInfo, maxDistance);
+                        if (hit)
+                        {
+                            inside = hitInfo.distance > distance - epsilon;
+                        }
+                        else
+                        {
+                            inside = true;
+                        }
+                    }
+
+                    scanVoxels[x, y, z] = inside ? 1f : 0f;
+                    Vector3 scanLocalColor = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                    scanColors[x, y, z] = SampleScanColorLocal(
+                        scanLocalColor,
+                        vertices,
+                        vertexColors,
+                        hasVertexColors,
+                        fallbackColor
+                    );
+                }
+            }
+        }
+    }
+
+    private static Vector3 GetInsidePoint(Collider targetCollider, Bounds bounds, float epsilon)
+    {
+        Vector3 candidate = bounds.center;
+        if (IsPointInsideCollider(targetCollider, candidate, epsilon))
+        {
+            return candidate;
+        }
+
+        Vector3 toTarget = targetCollider.transform.position - bounds.center;
+        float distance = toTarget.magnitude;
+        if (distance > epsilon)
+        {
+            Vector3 dir = toTarget / distance;
+            if (targetCollider.Raycast(new Ray(bounds.center, dir), out RaycastHit hit, distance * 2f))
+            {
+                Vector3 insidePoint = hit.point - hit.normal * epsilon;
+                if (IsPointInsideCollider(targetCollider, insidePoint, epsilon))
+                {
+                    return insidePoint;
+                }
+            }
+        }
+
+        return targetCollider.transform.position;
+    }
+
+    private static bool IsPointInsideCollider(Collider targetCollider, Vector3 point, float epsilon)
+    {
+        Vector3 closest = targetCollider.ClosestPoint(point);
+        if ((closest - point).sqrMagnitude <= epsilon * epsilon)
+        {
+            return true;
+        }
+
+        GameObject probeObject = new GameObject("ScanInsideProbe");
+        probeObject.hideFlags = HideFlags.HideAndDontSave;
+        SphereCollider probe = probeObject.AddComponent<SphereCollider>();
+        probe.isTrigger = true;
+        probe.radius = epsilon;
+
+        bool inside = Physics.ComputePenetration(
+            probe,
+            point,
+            Quaternion.identity,
+            targetCollider,
+            targetCollider.transform.position,
+            targetCollider.transform.rotation,
+            out _,
+            out float penetrationDistance);
+
+        if (Application.isPlaying)
+        {
+            Object.Destroy(probeObject);
+        }
+        else
+        {
+            Object.DestroyImmediate(probeObject);
+        }
+
+        return inside && penetrationDistance > 0f;
+    }
+
+    private void ScanObjectToGridSurfaceVoxelization(
+        Mesh meshTarget,
+        Vector3[] vertices,
+        Color[] vertexColors,
+        bool hasVertexColors,
+        Color fallbackColor,
+        Vector3 gridCenter,
+        Matrix4x4 blobToWorld,
+        Matrix4x4 blobWorldToLocal,
+        Matrix4x4 targetWorldToLocal,
+        Matrix4x4 targetLocalToWorld,
+        Vector3 scanOffset)
+    {
+        int maxX = size.x;
+        int maxY = size.y;
+        int maxZ = size.z;
+
+        for (int x = 0; x < maxX; x++)
+        {
+            for (int y = 0; y < maxY; y++)
+            {
+                for (int z = 0; z < maxZ; z++)
+                {
+                    scanVoxels[x, y, z] = 0f;
+                    scanColors[x, y, z] = fallbackColor;
+                }
+            }
+        }
+
+        bool[,,] surface = new bool[maxX, maxY, maxZ];
+        int[] triangles = meshTarget.triangles;
+        float maxSurfaceDistance = voxelSize * Mathf.Clamp(scanSurfaceThickness, 0.05f, 1f);
+        float maxSurfaceDistanceSq = maxSurfaceDistance * maxSurfaceDistance;
+
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            Vector3 v0Local = vertices[triangles[i]];
+            Vector3 v1Local = vertices[triangles[i + 1]];
+            Vector3 v2Local = vertices[triangles[i + 2]];
+
+            Vector3 v0World = targetLocalToWorld.MultiplyPoint3x4(v0Local);
+            Vector3 v1World = targetLocalToWorld.MultiplyPoint3x4(v1Local);
+            Vector3 v2World = targetLocalToWorld.MultiplyPoint3x4(v2Local);
+
+            Vector3 v0 = blobWorldToLocal.MultiplyPoint3x4(v0World);
+            Vector3 v1 = blobWorldToLocal.MultiplyPoint3x4(v1World);
+            Vector3 v2 = blobWorldToLocal.MultiplyPoint3x4(v2World);
+
+            Vector3 minLocal = Vector3.Min(v0, Vector3.Min(v1, v2));
+            Vector3 maxLocal = Vector3.Max(v0, Vector3.Max(v1, v2));
+
+            Vector3 minVoxel = minLocal / voxelSize + gridCenter;
+            Vector3 maxVoxel = maxLocal / voxelSize + gridCenter;
+
+            int startX = Mathf.Clamp(Mathf.FloorToInt(minVoxel.x) - 1, 0, maxX - 1);
+            int startY = Mathf.Clamp(Mathf.FloorToInt(minVoxel.y) - 1, 0, maxY - 1);
+            int startZ = Mathf.Clamp(Mathf.FloorToInt(minVoxel.z) - 1, 0, maxZ - 1);
+            int endX = Mathf.Clamp(Mathf.CeilToInt(maxVoxel.x) + 1, 0, maxX - 1);
+            int endY = Mathf.Clamp(Mathf.CeilToInt(maxVoxel.y) + 1, 0, maxY - 1);
+            int endZ = Mathf.Clamp(Mathf.CeilToInt(maxVoxel.z) + 1, 0, maxZ - 1);
+
+            for (int x = startX; x <= endX; x++)
+            {
+                for (int y = startY; y <= endY; y++)
+                {
+                    for (int z = startZ; z <= endZ; z++)
+                    {
+                        Vector3 voxelCenterLocal = (new Vector3(x, y, z) - gridCenter) * voxelSize;
+                        float distSq = PointTriangleDistanceSquared(voxelCenterLocal, v0, v1, v2);
+                        if (distSq <= maxSurfaceDistanceSq)
+                        {
+                            surface[x, y, z] = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        bool[,,] blocked = new bool[maxX, maxY, maxZ];
+        int seal = Mathf.Max(0, scanSurfaceSealVoxels);
+        if (seal == 0)
+        {
+            for (int x = 0; x < maxX; x++)
+            {
+                for (int y = 0; y < maxY; y++)
+                {
+                    for (int z = 0; z < maxZ; z++)
+                    {
+                        blocked[x, y, z] = surface[x, y, z];
+                    }
+                }
+            }
+        }
+        else
+        {
+            for (int x = 0; x < maxX; x++)
+            {
+                for (int y = 0; y < maxY; y++)
+                {
+                    for (int z = 0; z < maxZ; z++)
+                    {
+                        if (!surface[x, y, z])
+                        {
+                            continue;
+                        }
+
+                        int startX = Mathf.Max(0, x - seal);
+                        int endX = Mathf.Min(maxX - 1, x + seal);
+                        int startY = Mathf.Max(0, y - seal);
+                        int endY = Mathf.Min(maxY - 1, y + seal);
+                        int startZ = Mathf.Max(0, z - seal);
+                        int endZ = Mathf.Min(maxZ - 1, z + seal);
+                        for (int nx = startX; nx <= endX; nx++)
+                        {
+                            for (int ny = startY; ny <= endY; ny++)
+                            {
+                                for (int nz = startZ; nz <= endZ; nz++)
+                                {
+                                    blocked[nx, ny, nz] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        bool[,,] outside = new bool[maxX, maxY, maxZ];
+        Queue<Vector3Int> queue = new Queue<Vector3Int>();
+        for (int x = 0; x < maxX; x++)
+        {
+            for (int y = 0; y < maxY; y++)
+            {
+                EnqueueIfOutside(queue, outside, blocked, x, y, 0);
+                EnqueueIfOutside(queue, outside, blocked, x, y, maxZ - 1);
+            }
+        }
+        for (int x = 0; x < maxX; x++)
+        {
+            for (int z = 0; z < maxZ; z++)
+            {
+                EnqueueIfOutside(queue, outside, blocked, x, 0, z);
+                EnqueueIfOutside(queue, outside, blocked, x, maxY - 1, z);
+            }
+        }
+        for (int y = 0; y < maxY; y++)
+        {
+            for (int z = 0; z < maxZ; z++)
+            {
+                EnqueueIfOutside(queue, outside, blocked, 0, y, z);
+                EnqueueIfOutside(queue, outside, blocked, maxX - 1, y, z);
+            }
+        }
+
+        while (queue.Count > 0)
+        {
+            Vector3Int p = queue.Dequeue();
+            int x = p.x;
+            int y = p.y;
+            int z = p.z;
+            EnqueueIfOutside(queue, outside, blocked, x - 1, y, z);
+            EnqueueIfOutside(queue, outside, blocked, x + 1, y, z);
+            EnqueueIfOutside(queue, outside, blocked, x, y - 1, z);
+            EnqueueIfOutside(queue, outside, blocked, x, y + 1, z);
+            EnqueueIfOutside(queue, outside, blocked, x, y, z - 1);
+            EnqueueIfOutside(queue, outside, blocked, x, y, z + 1);
+        }
+
+        for (int x = 0; x < maxX; x++)
+        {
+            for (int y = 0; y < maxY; y++)
+            {
+                for (int z = 0; z < maxZ; z++)
+                {
+                    if (outside[x, y, z] && !blocked[x, y, z])
+                    {
+                        continue;
+                    }
+
+                    scanVoxels[x, y, z] = 1f;
+                    Vector3 local = new Vector3(x, y, z) - gridCenter;
+                    Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
+                    Vector3 scanWorld = world + scanOffset;
+                    Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                    scanColors[x, y, z] = SampleScanColorLocal(
+                        scanLocal,
+                        vertices,
+                        vertexColors,
+                        hasVertexColors,
+                        fallbackColor
+                    );
+                }
+            }
+        }
+    }
+
+    private static void EnqueueIfOutside(
+        Queue<Vector3Int> queue,
+        bool[,,] outside,
+        bool[,,] surface,
+        int x,
+        int y,
+        int z)
+    {
+        int maxX = outside.GetLength(0);
+        int maxY = outside.GetLength(1);
+        int maxZ = outside.GetLength(2);
+        if (x < 0 || y < 0 || z < 0 || x >= maxX || y >= maxY || z >= maxZ)
+        {
+            return;
+        }
+
+        if (outside[x, y, z] || surface[x, y, z])
+        {
+            return;
+        }
+
+        outside[x, y, z] = true;
+        queue.Enqueue(new Vector3Int(x, y, z));
     }
 
     private readonly struct VertexKey

@@ -123,7 +123,7 @@ public class PlayerController : MonoBehaviour
 
         if (cameraPivot == null) return;
 
-        Quaternion originalRotation = cameraPivot.localRotation;
+        Quaternion originalRotation = transform.rotation;
 
         // Horizontale Rotation (Spieler dreht sich um Y-Achse)
         transform.Rotate(Vector3.up, cameraInput.x * LookSensitivityMultiplyer * Time.deltaTime);

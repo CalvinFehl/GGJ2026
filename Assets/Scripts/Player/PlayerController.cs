@@ -17,6 +17,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private PlayerGraphicObject graphicObject;
 
     [Header("Movement Settings")]
+    [SerializeField] private float MaxSpeed = 20f;
     [SerializeField] public float MoveSpeedMultiplyer = 5f;
     [SerializeField] public float LookSensitivityMultiplyer = 1f;
 
@@ -68,11 +69,27 @@ public class PlayerController : MonoBehaviour
         {
             Brake();
         }
+
+    }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (collision.collider.CompareTag("Assimilateable"))
+        {
+            Debug.Log("Assimilate");
+        }
     }
 
     private void HandleMovementInput()
     {
         if (rb == null) return;
+
+        RigidbodyVelocity rigidbodyVelocity = new RigidbodyVelocity 
+        { 
+            Linear = rb.linearVelocity, 
+            Angular = rb.angularVelocity 
+        };
+
 
         Vector2 moveInput = inputActions.Player.Move.ReadValue<Vector2>();
 
@@ -82,8 +99,15 @@ public class PlayerController : MonoBehaviour
             Vector2 movement = new Vector3(moveInput.x, moveInput.y) * MoveSpeedMultiplyer;
             CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * Time.deltaTime;
 
-            rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
-            isMoving = movement.magnitude != 0f;
+            if (rigidbodyVelocity.Linear.magnitude != 0f)
+            {
+                isMoving = true;
+            }
+
+            if (rigidbodyVelocity.Linear.magnitude < MaxSpeed * Size)
+            {
+                rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
+            }
         }
 
         if (graphicObject != null)

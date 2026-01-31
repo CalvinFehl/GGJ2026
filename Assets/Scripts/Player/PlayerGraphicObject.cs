@@ -6,7 +6,7 @@ public class PlayerGraphicObject : MonoBehaviour
     {
         if (targetRotation != Quaternion.identity)
         {
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotSpeed * deltaTime);
+           // transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, rotSpeed * deltaTime);
         }
     }
 

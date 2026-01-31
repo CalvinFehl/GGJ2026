@@ -45,8 +45,14 @@ public class Blob : MonoBehaviour
     public float scanlineScrollScaleSensitivity = 0.001f;
     public float scanlinePauseBudgetSeconds = 5f;
 
+    [Header("Scan Grid")]
+    public float scanDistanceMax = 2f;
+    public GameObject scanTarget;
+
     private float[,,] voxels;
     private Color[,,] colors;
+    private float[,,] scanVoxels;
+    private Color[,,] scanColors;
     private Mesh mesh;
     private MeshFilter meshFilter;
     private Coroutine scanlineRoutine;
@@ -477,6 +483,7 @@ public class Blob : MonoBehaviour
         scanlineMouseScaleSensitivity = Mathf.Max(0f, scanlineMouseScaleSensitivity);
         scanlineScrollScaleSensitivity = Mathf.Max(0f, scanlineScrollScaleSensitivity);
         scanlinePauseBudgetSeconds = Mathf.Max(0f, scanlinePauseBudgetSeconds);
+        scanDistanceMax = Mathf.Max(0.01f, scanDistanceMax);
 
         bool sizeChanged = size != lastValidatedSize;
         bool meshAffectingChanged =
@@ -654,6 +661,134 @@ public class Blob : MonoBehaviour
         colors[x, y, z] = color;
     }
 
+    public void ScanObjectToGrid(GameObject target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        EnsureScanGrid();
+        MeshFilter meshFilterTarget = target.GetComponent<MeshFilter>();
+        Mesh meshTarget = meshFilterTarget != null ? meshFilterTarget.sharedMesh : null;
+
+        MeshRenderer rendererTarget = target.GetComponent<MeshRenderer>();
+        Color fallbackColor = rendererTarget != null && rendererTarget.sharedMaterial != null
+            ? rendererTarget.sharedMaterial.color
+            : Color.white;
+
+        Color[] vertexColors = meshTarget != null ? meshTarget.colors : null;
+        Vector3[] vertices = meshTarget != null ? meshTarget.vertices : System.Array.Empty<Vector3>();
+        bool hasVertexColors = vertexColors != null && vertexColors.Length == vertices.Length && vertices.Length > 0;
+
+        Collider scanCollider = target.GetComponent<Collider>();
+        bool createdCollider = false;
+        if (scanCollider == null)
+        {
+            if (meshTarget == null)
+            {
+                return;
+            }
+
+            MeshCollider meshCollider = target.AddComponent<MeshCollider>();
+            meshCollider.sharedMesh = meshTarget;
+            meshCollider.convex = true;
+            scanCollider = meshCollider;
+            createdCollider = true;
+        }
+
+        GameObject probeObject = null;
+        SphereCollider probeCollider = null;
+        probeObject = new GameObject("ScanProbe");
+        probeObject.hideFlags = HideFlags.HideAndDontSave;
+        probeCollider = probeObject.AddComponent<SphereCollider>();
+        probeCollider.radius = Mathf.Max(0.0001f, voxelSize * 0.001f);
+        Vector3 gridCenter = GetGridCenter();
+        Vector3 scanOffset = target.transform.position - transform.position;
+
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    Vector3 local = new Vector3(x, y, z) - gridCenter;
+                    Vector3 world = transform.TransformPoint(local * voxelSize);
+                    Vector3 scanWorld = world + scanOffset;
+                    probeObject.transform.position = scanWorld;
+                    float signedDistance = GetSignedDistance(scanWorld, scanCollider, probeCollider);
+                    float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
+                    scanVoxels[x, y, z] = value;
+                    scanColors[x, y, z] = SampleScanColor(scanWorld, target.transform, vertices, vertexColors, hasVertexColors, fallbackColor);
+                }
+            }
+        }
+
+        if (createdCollider)
+        {
+            Destroy(scanCollider);
+        }
+        DestroyImmediate(probeObject);
+    }
+
+    public void ApplyScanColorsToGrid()
+    {
+        EnsureGrid();
+        EnsureScanGrid();
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    colors[x, y, z] = scanColors[x, y, z];
+                }
+            }
+        }
+    }
+
+    public void ApplyScanGridToMesh()
+    {
+        EnsureGrid();
+        EnsureScanGrid();
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    voxels[x, y, z] = scanVoxels[x, y, z];
+                    colors[x, y, z] = scanColors[x, y, z];
+                }
+            }
+        }
+
+        RebuildMesh();
+    }
+
+    public float CompareToScanGrid(int rotationSteps, bool includeColors, out float bestRotationDegrees)
+    {
+        EnsureScanGrid();
+        EnsureGrid();
+
+        int steps = Mathf.Max(1, rotationSteps);
+        float bestScore = float.NegativeInfinity;
+        bestRotationDegrees = 0f;
+
+        for (int step = 0; step < steps; step++)
+        {
+            float angle = 360f * step / steps;
+            float score = ComputeSimilarity(angle, includeColors);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestRotationDegrees = angle;
+            }
+        }
+
+        return Mathf.Clamp01(bestScore);
+    }
+
     public bool GetVoxel(int x, int y, int z)
     {
         if (!InBounds(x, y, z))
@@ -822,6 +957,21 @@ public class Blob : MonoBehaviour
 
         voxels = new float[size.x, size.y, size.z];
         colors = new Color[size.x, size.y, size.z];
+    }
+
+    private void EnsureScanGrid()
+    {
+        if (scanVoxels != null &&
+            scanColors != null &&
+            scanVoxels.GetLength(0) == size.x &&
+            scanVoxels.GetLength(1) == size.y &&
+            scanVoxels.GetLength(2) == size.z)
+        {
+            return;
+        }
+
+        scanVoxels = new float[size.x, size.y, size.z];
+        scanColors = new Color[size.x, size.y, size.z];
     }
 
     private IEnumerator ScanlineRoutine()
@@ -1067,6 +1217,98 @@ public class Blob : MonoBehaviour
         return Mathf.Lerp(c0, c1, tz);
     }
 
+    private float SampleScanField(float x, float y, float z)
+    {
+        if (scanVoxels == null)
+        {
+            return 0f;
+        }
+
+        if (x < 0f || y < 0f || z < 0f ||
+            x > size.x - 1f || y > size.y - 1f || z > size.z - 1f)
+        {
+            return 0f;
+        }
+
+        float fx = x;
+        float fy = y;
+        float fz = z;
+
+        int x0 = Mathf.FloorToInt(fx);
+        int y0 = Mathf.FloorToInt(fy);
+        int z0 = Mathf.FloorToInt(fz);
+        int x1 = Mathf.Min(x0 + 1, size.x - 1);
+        int y1 = Mathf.Min(y0 + 1, size.y - 1);
+        int z1 = Mathf.Min(z0 + 1, size.z - 1);
+
+        float tx = fx - x0;
+        float ty = fy - y0;
+        float tz = fz - z0;
+
+        float c000 = scanVoxels[x0, y0, z0];
+        float c100 = scanVoxels[x1, y0, z0];
+        float c010 = scanVoxels[x0, y1, z0];
+        float c110 = scanVoxels[x1, y1, z0];
+        float c001 = scanVoxels[x0, y0, z1];
+        float c101 = scanVoxels[x1, y0, z1];
+        float c011 = scanVoxels[x0, y1, z1];
+        float c111 = scanVoxels[x1, y1, z1];
+
+        float c00 = Mathf.Lerp(c000, c100, tx);
+        float c10 = Mathf.Lerp(c010, c110, tx);
+        float c01 = Mathf.Lerp(c001, c101, tx);
+        float c11 = Mathf.Lerp(c011, c111, tx);
+        float c0 = Mathf.Lerp(c00, c10, ty);
+        float c1 = Mathf.Lerp(c01, c11, ty);
+        return Mathf.Lerp(c0, c1, tz);
+    }
+
+    private Color SampleScanColor(float x, float y, float z)
+    {
+        if (scanColors == null)
+        {
+            return Color.black;
+        }
+
+        if (x < 0f || y < 0f || z < 0f ||
+            x > size.x - 1f || y > size.y - 1f || z > size.z - 1f)
+        {
+            return Color.black;
+        }
+
+        float fx = x;
+        float fy = y;
+        float fz = z;
+
+        int x0 = Mathf.FloorToInt(fx);
+        int y0 = Mathf.FloorToInt(fy);
+        int z0 = Mathf.FloorToInt(fz);
+        int x1 = Mathf.Min(x0 + 1, size.x - 1);
+        int y1 = Mathf.Min(y0 + 1, size.y - 1);
+        int z1 = Mathf.Min(z0 + 1, size.z - 1);
+
+        float tx = fx - x0;
+        float ty = fy - y0;
+        float tz = fz - z0;
+
+        Color c000 = scanColors[x0, y0, z0];
+        Color c100 = scanColors[x1, y0, z0];
+        Color c010 = scanColors[x0, y1, z0];
+        Color c110 = scanColors[x1, y1, z0];
+        Color c001 = scanColors[x0, y0, z1];
+        Color c101 = scanColors[x1, y0, z1];
+        Color c011 = scanColors[x0, y1, z1];
+        Color c111 = scanColors[x1, y1, z1];
+
+        Color c00 = Color.Lerp(c000, c100, tx);
+        Color c10 = Color.Lerp(c010, c110, tx);
+        Color c01 = Color.Lerp(c001, c101, tx);
+        Color c11 = Color.Lerp(c011, c111, tx);
+        Color c0 = Color.Lerp(c00, c10, ty);
+        Color c1 = Color.Lerp(c01, c11, ty);
+        return Color.Lerp(c0, c1, tz);
+    }
+
     private float GetVoxelValueSafe(int x, int y, int z)
     {
         if (!InBounds(x, y, z))
@@ -1107,6 +1349,124 @@ public class Blob : MonoBehaviour
     private Vector3 GetGridCenter()
     {
         return new Vector3(size.x - 1, size.y - 1, size.z - 1) * 0.5f;
+    }
+
+    private float ComputeSimilarity(float rotationDegrees, bool includeColors)
+    {
+        Vector3 center = GetGridCenter();
+        float radians = rotationDegrees * Mathf.Deg2Rad;
+        float cos = Mathf.Cos(radians);
+        float sin = Mathf.Sin(radians);
+
+        float total = 0f;
+        float colorTotal = 0f;
+        int count = 0;
+
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    Vector3 p = new Vector3(x, y, z) - center;
+                    float rx = p.x * cos - p.z * sin;
+                    float rz = p.x * sin + p.z * cos;
+                    Vector3 rotated = new Vector3(rx, p.y, rz) + center;
+
+                    float scanValue = SampleScanField(rotated.x, rotated.y, rotated.z);
+                    float diff = Mathf.Abs(voxels[x, y, z] - scanValue);
+                    total += diff;
+
+                    if (includeColors)
+                    {
+                        Color scanColor = SampleScanColor(rotated.x, rotated.y, rotated.z);
+                        Color current = colors[x, y, z];
+                        colorTotal += Mathf.Abs(current.r - scanColor.r) +
+                                      Mathf.Abs(current.g - scanColor.g) +
+                                      Mathf.Abs(current.b - scanColor.b);
+                    }
+
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            return 0f;
+        }
+
+        float valueScore = 1f - (total / count);
+        if (!includeColors)
+        {
+            return valueScore;
+        }
+
+        float colorScore = 1f - (colorTotal / (count * 3f));
+        return (valueScore + colorScore) * 0.5f;
+    }
+
+    private float GetSignedDistance(Vector3 worldPoint, Collider collider, SphereCollider probe)
+    {
+        if (collider == null || probe == null)
+        {
+            Vector3 closestFallback = collider != null ? collider.ClosestPoint(worldPoint) : worldPoint;
+            float distanceFallback = Vector3.Distance(worldPoint, closestFallback);
+            bool insideFallback = collider != null && (closestFallback - worldPoint).sqrMagnitude < 0.000001f;
+            return insideFallback ? -distanceFallback : distanceFallback;
+        }
+
+        Vector3 closest = collider.ClosestPoint(worldPoint);
+        float distance = Vector3.Distance(worldPoint, closest);
+
+        float penetrationDistance = 0f;
+        bool penetrationInside = Physics.ComputePenetration(
+                probe,
+                probe.transform.position,
+                probe.transform.rotation,
+                collider,
+                collider.transform.position,
+                collider.transform.rotation,
+                out _,
+                out penetrationDistance);
+
+        bool inside = penetrationInside || distance <= 0.0001f;
+        if (inside)
+        {
+            float insideDistance = penetrationDistance > 0f ? penetrationDistance : Mathf.Max(distance, voxelSize * 0.5f);
+            return -insideDistance;
+        }
+
+        return distance;
+    }
+
+    private Color SampleScanColor(
+        Vector3 worldPoint,
+        Transform targetTransform,
+        Vector3[] vertices,
+        Color[] vertexColors,
+        bool hasVertexColors,
+        Color fallback)
+    {
+        if (!hasVertexColors || vertices.Length == 0)
+        {
+            return fallback;
+        }
+
+        Vector3 local = targetTransform.InverseTransformPoint(worldPoint);
+        float best = float.PositiveInfinity;
+        int bestIndex = 0;
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            float d = (vertices[i] - local).sqrMagnitude;
+            if (d < best)
+            {
+                best = d;
+                bestIndex = i;
+            }
+        }
+
+        return vertexColors[bestIndex];
     }
 
     private readonly struct VertexKey

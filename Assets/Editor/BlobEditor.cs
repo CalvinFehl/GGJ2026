@@ -35,5 +35,15 @@ public class BlobEditor : Editor
             blob.StartScanline();
         }
         GUI.enabled = true;
+
+        GUILayout.Space(8f);
+
+        if (GUILayout.Button("Scan Target To Grid"))
+        {
+            Undo.RecordObject(blob, "Scan Target To Grid");
+            blob.ScanObjectToGrid(blob.scanTarget);
+            blob.ApplyScanGridToMesh();
+            EditorUtility.SetDirty(blob);
+        }
     }
 }

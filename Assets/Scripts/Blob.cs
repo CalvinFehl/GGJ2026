@@ -865,6 +865,57 @@ public class Blob : MonoBehaviour
         return Mathf.Clamp01(bestScore);
     }
 
+    public float CompareToScanGridAdvanced(
+        int rotationSteps,
+        int scaleSteps,
+        float scaleRange,
+        int yOffsetSteps,
+        int yOffsetRange,
+        bool includeColors,
+        out float bestRotationDegrees,
+        out float bestScale,
+        out int bestYOffset)
+    {
+        EnsureScanGrid();
+        EnsureGrid();
+
+        int rotSteps = Mathf.Max(1, rotationSteps);
+        int sclSteps = Mathf.Max(1, scaleSteps);
+        int ySteps = Mathf.Max(1, yOffsetSteps);
+        float range = Mathf.Max(0f, scaleRange);
+        int yRange = Mathf.Max(0, yOffsetRange);
+
+        float bestScore = float.NegativeInfinity;
+        bestRotationDegrees = 0f;
+        bestScale = 1f;
+        bestYOffset = 0;
+
+        for (int r = 0; r < rotSteps; r++)
+        {
+            float angle = 360f * r / rotSteps;
+            for (int s = 0; s < sclSteps; s++)
+            {
+                float t = sclSteps == 1 ? 0.5f : (float)s / (sclSteps - 1);
+                float scale = 1f + Mathf.Lerp(-range, range, t);
+                scale = Mathf.Max(0.01f, scale);
+                for (int y = 0; y < ySteps; y++)
+                {
+                    int yOffset = ySteps == 1 ? 0 : Mathf.RoundToInt(Mathf.Lerp(-yRange, yRange, (float)y / (ySteps - 1)));
+                    float score = ComputeSimilarity(angle, scale, yOffset, includeColors);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestRotationDegrees = angle;
+                        bestScale = scale;
+                        bestYOffset = yOffset;
+                    }
+                }
+            }
+        }
+
+        return Mathf.Clamp01(bestScore);
+    }
+
     public bool GetVoxel(int x, int y, int z)
     {
         if (!InBounds(x, y, z))
@@ -1448,6 +1499,63 @@ public class Blob : MonoBehaviour
                     float rx = p.x * cos - p.z * sin;
                     float rz = p.x * sin + p.z * cos;
                     Vector3 rotated = new Vector3(rx, p.y, rz) + center;
+
+                    float scanValue = SampleScanField(rotated.x, rotated.y, rotated.z);
+                    float diff = Mathf.Abs(voxels[x, y, z] - scanValue);
+                    total += diff;
+
+                    if (includeColors)
+                    {
+                        Color scanColor = SampleScanColor(rotated.x, rotated.y, rotated.z);
+                        Color current = colors[x, y, z];
+                        colorTotal += Mathf.Abs(current.r - scanColor.r) +
+                                      Mathf.Abs(current.g - scanColor.g) +
+                                      Mathf.Abs(current.b - scanColor.b);
+                    }
+
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            return 0f;
+        }
+
+        float valueScore = 1f - (total / count);
+        if (!includeColors)
+        {
+            return valueScore;
+        }
+
+        float colorScore = 1f - (colorTotal / (count * 3f));
+        return (valueScore + colorScore) * 0.5f;
+    }
+
+    private float ComputeSimilarity(float rotationDegrees, float scale, int yOffset, bool includeColors)
+    {
+        Vector3 center = GetGridCenter();
+        float radians = rotationDegrees * Mathf.Deg2Rad;
+        float cos = Mathf.Cos(radians);
+        float sin = Mathf.Sin(radians);
+        float invScale = 1f / Mathf.Max(0.0001f, scale);
+
+        float total = 0f;
+        float colorTotal = 0f;
+        int count = 0;
+
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    Vector3 p = new Vector3(x, y, z) - center;
+                    float rx = p.x * cos - p.z * sin;
+                    float rz = p.x * sin + p.z * cos;
+                    Vector3 rotated = new Vector3(rx, p.y, rz) * invScale + center;
+                    rotated.y += yOffset;
 
                     float scanValue = SampleScanField(rotated.x, rotated.y, rotated.z);
                     float diff = Mathf.Abs(voxels[x, y, z] - scanValue);

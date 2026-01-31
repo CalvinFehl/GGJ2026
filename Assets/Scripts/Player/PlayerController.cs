@@ -1,6 +1,6 @@
 using UnityEngine;
 
-public class PlayerInputHandler : MonoBehaviour
+public class PlayerController : MonoBehaviour
 {
     #region Structs
     struct RigidbodyVelocity

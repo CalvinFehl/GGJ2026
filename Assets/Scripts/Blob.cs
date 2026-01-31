@@ -730,6 +730,12 @@ public class Blob : MonoBehaviour
         Vector3 scanOffset = target.transform.position - transform.position;
         Matrix4x4 blobToWorld = transform.localToWorldMatrix;
         Matrix4x4 targetWorldToLocal = target.transform.worldToLocalMatrix;
+        Vector3 targetScale = target.transform.lossyScale;
+        float targetScaleFactor = Mathf.Max(
+            Mathf.Abs(targetScale.x),
+            Mathf.Abs(targetScale.y),
+            Mathf.Abs(targetScale.z)
+        );
 
         if (useMeshDistance && scanUseParallel)
         {
@@ -750,6 +756,7 @@ public class Blob : MonoBehaviour
                         Vector3 scanWorld = world + scanOffset;
                         Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
                         float signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisitThread, ref visitMarkThread);
+                        signedDistance *= targetScaleFactor;
                         float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
                         scanVoxels[x, y, z] = value;
                         scanColors[x, y, z] = SampleScanColorLocal(scanLocal, vertices, vertexColors, hasVertexColors, fallbackColor);
@@ -778,6 +785,7 @@ public class Blob : MonoBehaviour
                         {
                             Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
                             signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisit, ref visitMark);
+                            signedDistance *= targetScaleFactor;
                         }
                         else
                         {

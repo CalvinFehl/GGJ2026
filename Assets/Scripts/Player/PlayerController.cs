@@ -20,10 +20,12 @@ public class PlayerController : MonoBehaviour
     [Header("Movement Settings")]
     [SerializeField] private float MaxSpeed = 20f;
     [SerializeField] public float MoveSpeedMultiplyer = 5f;
+    [SerializeField] private float movementDeadzone = 0.1f;
     [SerializeField] public float LookSensitivityMultiplyer = 1f;
 
     [SerializeField] public float BrakeStrength = 0.1f;
     private bool IsBraking = false;
+    private bool IsScanning = false;
 
     [Header("PlayerState Variables")]
     [SerializeField] public float CurrentEnergyAmount = 5f;
@@ -68,6 +70,8 @@ public class PlayerController : MonoBehaviour
 
         inputActions.Player.Crouch.performed += ctx => IsBraking = true;
         inputActions.Player.Crouch.canceled += ctx => IsBraking = false;
+        inputActions.Player.ScanMode.performed += ctx => IsScanning = true;
+        inputActions.Player.ScanMode.canceled += ctx => IsScanning = false;
 
         inputActions.Player.Interact.performed += ctx => Interact();
 
@@ -154,6 +158,12 @@ public class PlayerController : MonoBehaviour
             Vector2 movement = new Vector3(moveInput.x, moveInput.y) * MoveSpeedMultiplyer;
             CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * dt;
 
+            if(rigidbodyVelocity.Linear.magnitude < movementDeadzone)
+            {
+                rigidbodyVelocity.Linear = Vector3.zero;
+                rb.linearVelocity = Vector3.zero;
+            }
+
             if (rigidbodyVelocity.Linear.magnitude != 0f)
             {
                 isMoving = true;
@@ -168,13 +178,15 @@ public class PlayerController : MonoBehaviour
         if (graphicObject != null)
         {
             if (cameraPivot == null || !isMoving) return;
-            //graphicObject.Reorient(cameraPivot.rotation, Time.deltaTime, rb.linearVelocity.magnitude * reorientationMultiplyer);
+            
+            Debug.Log("Reorient Graphic Object");
+            graphicObject.Reorient(cameraPivot.up, Time.deltaTime);
         }
     }
 
     private void HandleCameraInput()
     {
-        if (cameraPivot == null) return;
+        if (cameraPivot == null || IsScanning) return;
 
         float dt = Time.fixedDeltaTime;
         Quaternion originalRotation = rb != null ? rb.rotation : transform.rotation;
@@ -188,6 +200,12 @@ public class PlayerController : MonoBehaviour
         else
         {
             transform.Rotate(Vector3.up, yawDelta);
+        }
+
+        if (graphicObject != null)
+        {
+            Debug.Log("Rotate Graphic Object Yaw");
+            graphicObject.RotateYaw(-yawDelta);
         }
 
         // Vertikale Rotation (Kamera neigt sich um X-Achse)
@@ -204,11 +222,6 @@ public class PlayerController : MonoBehaviour
 
         // Wende die neue Rotation an
         cameraPivot.localEulerAngles = new Vector3(newXRotation, 0f, 0f);
-
-        if(graphicObject != null)
-        {
-            graphicObject.Rotate(originalRotation);
-        }
     }
 
     private void FixedUpdate()

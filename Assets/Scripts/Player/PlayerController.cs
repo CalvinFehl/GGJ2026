@@ -2,15 +2,6 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
-    #region Structs
-    struct RigidbodyVelocity
-    {
-        public Vector3 Linear;
-        public Vector3 Angular;
-    }
-
-    #endregion
-
     #region Variables
     [Header("Components")]
     [SerializeField] private Rigidbody rb;
@@ -29,7 +20,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float movementDeadzone = 0.1f;
     [SerializeField] public float LookSensitivityMultiplyer = 1f;
     [SerializeField] private float RisingSinkingMultiplier = 1f;
-    private float lastSpeed = 0f;
+    private Vector3 lastLinearVelocity;
 
     [SerializeField] public float BrakeStrength = 0.1f;
     private bool IsBraking = false;
@@ -179,7 +170,7 @@ public class PlayerController : MonoBehaviour
         // Update the scale of the Collider
         if (collider != null)
         {
-            collider.radius = colliderRadius * Size;
+            collider.radius = colliderRadius * Size / 2f;
         }
 
         // Update Camera Distance
@@ -234,14 +225,10 @@ public class PlayerController : MonoBehaviour
 
         float dt = Time.fixedDeltaTime;
 
-        RigidbodyVelocity rigidbodyVelocity = new RigidbodyVelocity 
-        { 
-            Linear = rb.linearVelocity, 
-            Angular = rb.angularVelocity 
-        };
+        Vector3 currentLinearVelocity = rb.linearVelocity;
 
         bool isMoving = false;
-        float speed = rigidbodyVelocity.Linear.magnitude;
+        float speed = currentLinearVelocity.magnitude;
 
         if (CurrentEnergyAmount > 0f)
         {
@@ -250,7 +237,7 @@ public class PlayerController : MonoBehaviour
 
             if (speed < movementDeadzone)
             {
-                rigidbodyVelocity.Linear = Vector3.zero;
+                currentLinearVelocity = Vector3.zero;
                 rb.linearVelocity = Vector3.zero;
             }
 
@@ -277,27 +264,17 @@ public class PlayerController : MonoBehaviour
                     rb.AddForce(desiredDirection, ForceMode.Force);
                 }
             }
+
         }
 
         if (graphicObject != null)
         {
-            if (cameraPivot == null || !isMoving) return;
-            
-            if (speed > lastSpeed && !isReorienting)
-            {
-                StartCoroutine(ReorientAndToggleFlag(speed / Size * reorientationMultiplyer));
-            }
+            Vector3 velocityChange = (lastLinearVelocity - currentLinearVelocity).normalized;
+            graphicObject.Tilt(new Vector3(velocityChange.x, 1f, velocityChange.z), dt, reorientationMultiplyer);
         }
-
-        lastSpeed = speed;
+        lastLinearVelocity = currentLinearVelocity;
     }
 
-    private System.Collections.IEnumerator ReorientAndToggleFlag(float reorientationSpeed)
-    {
-        isReorienting = true;
-        yield return StartCoroutine(graphicObject.ReorientCoroutine(reorientationSpeed));
-        isReorienting = false;
-    }
 
     private void HandleCameraInput()
     {

@@ -1,5 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -48,11 +50,17 @@ public class Blob : MonoBehaviour
     [Header("Scan Grid")]
     public float scanDistanceMax = 2f;
     public GameObject scanTarget;
+    public bool scanUseParallel = true;
 
     private float[,,] voxels;
     private Color[,,] colors;
     private float[,,] scanVoxels;
     private Color[,,] scanColors;
+    private Mesh cachedScanMesh;
+    private MeshAccel cachedScanAccel;
+    private Vector3[] cachedScanVertices;
+    private int[] cachedScanTriangles;
+    private float cachedScanVoxelSize = -1f;
     private Mesh mesh;
     private MeshFilter meshFilter;
     private Coroutine scanlineRoutine;
@@ -681,54 +689,122 @@ public class Blob : MonoBehaviour
         Vector3[] vertices = meshTarget != null ? meshTarget.vertices : System.Array.Empty<Vector3>();
         bool hasVertexColors = vertexColors != null && vertexColors.Length == vertices.Length && vertices.Length > 0;
 
-        Collider scanCollider = target.GetComponent<Collider>();
-        bool createdCollider = false;
-        if (scanCollider == null)
+        bool useMeshDistance = meshTarget != null && meshTarget.triangles != null && meshTarget.triangles.Length > 0;
+        MeshAccel meshAccel = new MeshAccel();
+        int[] triVisit = null;
+        int visitMark = 1;
+
+        Collider scanCollider = null;
+        GameObject probeObject = null;
+        SphereCollider probeCollider = null;
+
+        if (useMeshDistance)
         {
-            if (meshTarget == null)
+            if (meshTarget != cachedScanMesh || !Mathf.Approximately(cachedScanVoxelSize, voxelSize))
+            {
+                cachedScanMesh = meshTarget;
+                cachedScanVoxelSize = voxelSize;
+                cachedScanVertices = meshTarget.vertices;
+                cachedScanTriangles = meshTarget.triangles;
+                cachedScanAccel = BuildMeshAccel(cachedScanVertices, cachedScanTriangles);
+            }
+
+            vertices = cachedScanVertices;
+            meshAccel = cachedScanAccel;
+            triVisit = new int[meshAccel.tris != null ? meshAccel.tris.Length : 0];
+        }
+        else
+        {
+            scanCollider = target.GetComponent<Collider>();
+            if (scanCollider == null)
             {
                 return;
             }
 
-            MeshCollider meshCollider = target.AddComponent<MeshCollider>();
-            meshCollider.sharedMesh = meshTarget;
-            meshCollider.convex = true;
-            scanCollider = meshCollider;
-            createdCollider = true;
+            probeObject = new GameObject("ScanProbe");
+            probeObject.hideFlags = HideFlags.HideAndDontSave;
+            probeCollider = probeObject.AddComponent<SphereCollider>();
+            probeCollider.radius = Mathf.Max(0.0001f, voxelSize * 0.001f);
         }
-
-        GameObject probeObject = null;
-        SphereCollider probeCollider = null;
-        probeObject = new GameObject("ScanProbe");
-        probeObject.hideFlags = HideFlags.HideAndDontSave;
-        probeCollider = probeObject.AddComponent<SphereCollider>();
-        probeCollider.radius = Mathf.Max(0.0001f, voxelSize * 0.001f);
         Vector3 gridCenter = GetGridCenter();
         Vector3 scanOffset = target.transform.position - transform.position;
+        Matrix4x4 blobToWorld = transform.localToWorldMatrix;
+        Matrix4x4 targetWorldToLocal = target.transform.worldToLocalMatrix;
+        Vector3 targetScale = target.transform.lossyScale;
+        float targetScaleFactor = Mathf.Max(
+            Mathf.Abs(targetScale.x),
+            Mathf.Abs(targetScale.y),
+            Mathf.Abs(targetScale.z)
+        );
 
-        for (int x = 0; x < size.x; x++)
+        if (useMeshDistance && scanUseParallel)
         {
-            for (int y = 0; y < size.y; y++)
+            int triCount = meshAccel.tris != null ? meshAccel.tris.Length : 0;
+            var triVisitLocal = new ThreadLocal<int[]>(() => new int[triCount]);
+            var visitMarkLocal = new ThreadLocal<int>(() => 1);
+
+            Parallel.For(0, size.x, x =>
             {
-                for (int z = 0; z < size.z; z++)
+                int[] triVisitThread = triVisitLocal.Value;
+                int visitMarkThread = visitMarkLocal.Value;
+                for (int y = 0; y < size.y; y++)
                 {
-                    Vector3 local = new Vector3(x, y, z) - gridCenter;
-                    Vector3 world = transform.TransformPoint(local * voxelSize);
-                    Vector3 scanWorld = world + scanOffset;
-                    probeObject.transform.position = scanWorld;
-                    float signedDistance = GetSignedDistance(scanWorld, scanCollider, probeCollider);
-                    float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
-                    scanVoxels[x, y, z] = value;
-                    scanColors[x, y, z] = SampleScanColor(scanWorld, target.transform, vertices, vertexColors, hasVertexColors, fallbackColor);
+                    for (int z = 0; z < size.z; z++)
+                    {
+                        Vector3 local = new Vector3(x, y, z) - gridCenter;
+                        Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
+                        Vector3 scanWorld = world + scanOffset;
+                        Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                        float signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisitThread, ref visitMarkThread);
+                        signedDistance *= targetScaleFactor;
+                        float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
+                        scanVoxels[x, y, z] = value;
+                        scanColors[x, y, z] = SampleScanColorLocal(scanLocal, vertices, vertexColors, hasVertexColors, fallbackColor);
+                    }
+                }
+
+                visitMarkLocal.Value = visitMarkThread;
+            });
+
+            triVisitLocal.Dispose();
+            visitMarkLocal.Dispose();
+        }
+        else
+        {
+            for (int x = 0; x < size.x; x++)
+            {
+                for (int y = 0; y < size.y; y++)
+                {
+                    for (int z = 0; z < size.z; z++)
+                    {
+                        Vector3 local = new Vector3(x, y, z) - gridCenter;
+                        Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
+                        Vector3 scanWorld = world + scanOffset;
+                        float signedDistance;
+                        if (useMeshDistance)
+                        {
+                            Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                            signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisit, ref visitMark);
+                            signedDistance *= targetScaleFactor;
+                        }
+                        else
+                        {
+                            probeObject.transform.position = scanWorld;
+                            signedDistance = GetSignedDistance(scanWorld, scanCollider, probeCollider);
+                        }
+                        float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
+                        scanVoxels[x, y, z] = value;
+                        Vector3 scanLocalColor = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                        scanColors[x, y, z] = SampleScanColorLocal(scanLocalColor, vertices, vertexColors, hasVertexColors, fallbackColor);
+                    }
                 }
             }
         }
 
-        if (createdCollider)
+        if (probeObject != null)
         {
-            Destroy(scanCollider);
+            DestroyImmediate(probeObject);
         }
-        DestroyImmediate(probeObject);
     }
 
     public void ApplyScanColorsToGrid()
@@ -783,6 +859,57 @@ public class Blob : MonoBehaviour
             {
                 bestScore = score;
                 bestRotationDegrees = angle;
+            }
+        }
+
+        return Mathf.Clamp01(bestScore);
+    }
+
+    public float CompareToScanGridAdvanced(
+        int rotationSteps,
+        int scaleSteps,
+        float scaleRange,
+        int yOffsetSteps,
+        int yOffsetRange,
+        bool includeColors,
+        out float bestRotationDegrees,
+        out float bestScale,
+        out int bestYOffset)
+    {
+        EnsureScanGrid();
+        EnsureGrid();
+
+        int rotSteps = Mathf.Max(1, rotationSteps);
+        int sclSteps = Mathf.Max(1, scaleSteps);
+        int ySteps = Mathf.Max(1, yOffsetSteps);
+        float range = Mathf.Max(0f, scaleRange);
+        int yRange = Mathf.Max(0, yOffsetRange);
+
+        float bestScore = float.NegativeInfinity;
+        bestRotationDegrees = 0f;
+        bestScale = 1f;
+        bestYOffset = 0;
+
+        for (int r = 0; r < rotSteps; r++)
+        {
+            float angle = 360f * r / rotSteps;
+            for (int s = 0; s < sclSteps; s++)
+            {
+                float t = sclSteps == 1 ? 0.5f : (float)s / (sclSteps - 1);
+                float scale = 1f + Mathf.Lerp(-range, range, t);
+                scale = Mathf.Max(0.01f, scale);
+                for (int y = 0; y < ySteps; y++)
+                {
+                    int yOffset = ySteps == 1 ? 0 : Mathf.RoundToInt(Mathf.Lerp(-yRange, yRange, (float)y / (ySteps - 1)));
+                    float score = ComputeSimilarity(angle, scale, yOffset, includeColors);
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestRotationDegrees = angle;
+                        bestScale = scale;
+                        bestYOffset = yOffset;
+                    }
+                }
             }
         }
 
@@ -1406,6 +1533,63 @@ public class Blob : MonoBehaviour
         return (valueScore + colorScore) * 0.5f;
     }
 
+    private float ComputeSimilarity(float rotationDegrees, float scale, int yOffset, bool includeColors)
+    {
+        Vector3 center = GetGridCenter();
+        float radians = rotationDegrees * Mathf.Deg2Rad;
+        float cos = Mathf.Cos(radians);
+        float sin = Mathf.Sin(radians);
+        float invScale = 1f / Mathf.Max(0.0001f, scale);
+
+        float total = 0f;
+        float colorTotal = 0f;
+        int count = 0;
+
+        for (int x = 0; x < size.x; x++)
+        {
+            for (int y = 0; y < size.y; y++)
+            {
+                for (int z = 0; z < size.z; z++)
+                {
+                    Vector3 p = new Vector3(x, y, z) - center;
+                    float rx = p.x * cos - p.z * sin;
+                    float rz = p.x * sin + p.z * cos;
+                    Vector3 rotated = new Vector3(rx, p.y, rz) * invScale + center;
+                    rotated.y += yOffset;
+
+                    float scanValue = SampleScanField(rotated.x, rotated.y, rotated.z);
+                    float diff = Mathf.Abs(voxels[x, y, z] - scanValue);
+                    total += diff;
+
+                    if (includeColors)
+                    {
+                        Color scanColor = SampleScanColor(rotated.x, rotated.y, rotated.z);
+                        Color current = colors[x, y, z];
+                        colorTotal += Mathf.Abs(current.r - scanColor.r) +
+                                      Mathf.Abs(current.g - scanColor.g) +
+                                      Mathf.Abs(current.b - scanColor.b);
+                    }
+
+                    count++;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            return 0f;
+        }
+
+        float valueScore = 1f - (total / count);
+        if (!includeColors)
+        {
+            return valueScore;
+        }
+
+        float colorScore = 1f - (colorTotal / (count * 3f));
+        return (valueScore + colorScore) * 0.5f;
+    }
+
     private float GetSignedDistance(Vector3 worldPoint, Collider collider, SphereCollider probe)
     {
         if (collider == null || probe == null)
@@ -1416,21 +1600,32 @@ public class Blob : MonoBehaviour
             return insideFallback ? -distanceFallback : distanceFallback;
         }
 
-        Vector3 closest = collider.ClosestPoint(worldPoint);
-        float distance = Vector3.Distance(worldPoint, closest);
+        MeshCollider meshCollider = collider as MeshCollider;
+        bool isNonConvexMesh = meshCollider != null && !meshCollider.convex;
+        float distance = isNonConvexMesh
+            ? GetDistanceToNonConvexMesh(worldPoint, collider)
+            : Vector3.Distance(worldPoint, collider.ClosestPoint(worldPoint));
 
+        bool inside = false;
         float penetrationDistance = 0f;
-        bool penetrationInside = Physics.ComputePenetration(
-                probe,
-                probe.transform.position,
-                probe.transform.rotation,
-                collider,
-                collider.transform.position,
-                collider.transform.rotation,
-                out _,
-                out penetrationDistance);
+        if (isNonConvexMesh)
+        {
+            inside = IsPointInsideNonConvexMesh(worldPoint, collider);
+        }
+        else
+        {
+            bool penetrationInside = Physics.ComputePenetration(
+                    probe,
+                    probe.transform.position,
+                    probe.transform.rotation,
+                    collider,
+                    collider.transform.position,
+                    collider.transform.rotation,
+                    out _,
+                    out penetrationDistance);
 
-        bool inside = penetrationInside || distance <= 0.0001f;
+            inside = penetrationInside || distance <= 0.0001f;
+        }
         if (inside)
         {
             float insideDistance = penetrationDistance > 0f ? penetrationDistance : Mathf.Max(distance, voxelSize * 0.5f);
@@ -1438,6 +1633,650 @@ public class Blob : MonoBehaviour
         }
 
         return distance;
+    }
+
+    private float GetSignedDistanceToMesh(Vector3 worldPoint, Vector3[] vertices, int[] triangles)
+    {
+        if (vertices == null || triangles == null || triangles.Length == 0)
+        {
+            return 0f;
+        }
+
+        float minDistSq = float.PositiveInfinity;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            Vector3 a = vertices[triangles[i]];
+            Vector3 b = vertices[triangles[i + 1]];
+            Vector3 c = vertices[triangles[i + 2]];
+            float d = PointTriangleDistanceSquared(worldPoint, a, b, c);
+            if (d < minDistSq)
+            {
+                minDistSq = d;
+            }
+        }
+
+        float distance = Mathf.Sqrt(minDistSq);
+        bool inside = IsPointInsideMesh(worldPoint, vertices, triangles);
+        return inside ? -distance : distance;
+    }
+
+    private struct TriangleData
+    {
+        public Vector3 a;
+        public Vector3 b;
+        public Vector3 c;
+        public Vector3 min;
+        public Vector3 max;
+    }
+
+    private struct MeshAccel
+    {
+        public Vector3 boundsMin;
+        public Vector3 boundsMax;
+        public Vector3 cellSize;
+        public int nx;
+        public int ny;
+        public int nz;
+        public TriangleData[] tris;
+        public int[] cellOffsets;
+        public int[] cellCounts;
+        public int[] cellTris;
+    }
+
+    private MeshAccel BuildMeshAccel(Vector3[] worldVertices, int[] triangles)
+    {
+        MeshAccel accel = new MeshAccel();
+        if (worldVertices == null || worldVertices.Length == 0 || triangles == null || triangles.Length == 0)
+        {
+            return accel;
+        }
+
+        Vector3 min = worldVertices[0];
+        Vector3 max = worldVertices[0];
+        for (int i = 1; i < worldVertices.Length; i++)
+        {
+            min = Vector3.Min(min, worldVertices[i]);
+            max = Vector3.Max(max, worldVertices[i]);
+        }
+
+        accel.boundsMin = min;
+        accel.boundsMax = max;
+        accel.cellSize = new Vector3(
+            Mathf.Max(0.0001f, voxelSize),
+            Mathf.Max(0.0001f, voxelSize),
+            Mathf.Max(0.0001f, voxelSize)
+        );
+        accel.nx = Mathf.Max(1, Mathf.CeilToInt((max.x - min.x) / accel.cellSize.x));
+        accel.ny = Mathf.Max(1, Mathf.CeilToInt((max.y - min.y) / accel.cellSize.y));
+        accel.nz = Mathf.Max(1, Mathf.CeilToInt((max.z - min.z) / accel.cellSize.z));
+
+        int triCount = triangles.Length / 3;
+        accel.tris = new TriangleData[triCount];
+        for (int i = 0; i < triCount; i++)
+        {
+            int t = i * 3;
+            Vector3 a = worldVertices[triangles[t]];
+            Vector3 b = worldVertices[triangles[t + 1]];
+            Vector3 c = worldVertices[triangles[t + 2]];
+            TriangleData data = new TriangleData
+            {
+                a = a,
+                b = b,
+                c = c,
+                min = Vector3.Min(a, Vector3.Min(b, c)),
+                max = Vector3.Max(a, Vector3.Max(b, c))
+            };
+            accel.tris[i] = data;
+        }
+
+        int cellCount = accel.nx * accel.ny * accel.nz;
+        List<int>[] cellLists = new List<int>[cellCount];
+        for (int i = 0; i < triCount; i++)
+        {
+            TriangleData tri = accel.tris[i];
+            Vector3 minCell = WorldToCell(tri.min, accel);
+            Vector3 maxCell = WorldToCell(tri.max, accel);
+            int x0 = Mathf.Clamp((int)minCell.x, 0, accel.nx - 1);
+            int y0 = Mathf.Clamp((int)minCell.y, 0, accel.ny - 1);
+            int z0 = Mathf.Clamp((int)minCell.z, 0, accel.nz - 1);
+            int x1 = Mathf.Clamp((int)maxCell.x, 0, accel.nx - 1);
+            int y1 = Mathf.Clamp((int)maxCell.y, 0, accel.ny - 1);
+            int z1 = Mathf.Clamp((int)maxCell.z, 0, accel.nz - 1);
+
+            for (int x = x0; x <= x1; x++)
+            {
+                for (int y = y0; y <= y1; y++)
+                {
+                    for (int z = z0; z <= z1; z++)
+                    {
+                        int idx = CellIndex(x, y, z, accel);
+                        if (cellLists[idx] == null)
+                        {
+                            cellLists[idx] = new List<int>();
+                        }
+                        cellLists[idx].Add(i);
+                    }
+                }
+            }
+        }
+
+        accel.cellOffsets = new int[cellCount];
+        accel.cellCounts = new int[cellCount];
+        int total = 0;
+        for (int i = 0; i < cellCount; i++)
+        {
+            int count = cellLists[i] != null ? cellLists[i].Count : 0;
+            accel.cellOffsets[i] = total;
+            accel.cellCounts[i] = count;
+            total += count;
+        }
+
+        accel.cellTris = new int[total];
+        int cursor = 0;
+        for (int i = 0; i < cellCount; i++)
+        {
+            List<int> list = cellLists[i];
+            if (list == null)
+            {
+                continue;
+            }
+
+            for (int j = 0; j < list.Count; j++)
+            {
+                accel.cellTris[cursor++] = list[j];
+            }
+        }
+
+        return accel;
+    }
+
+    private Vector3 WorldToCell(Vector3 world, MeshAccel accel)
+    {
+        Vector3 local = world - accel.boundsMin;
+        return new Vector3(
+            local.x / accel.cellSize.x,
+            local.y / accel.cellSize.y,
+            local.z / accel.cellSize.z
+        );
+    }
+
+    private int CellIndex(int x, int y, int z, MeshAccel accel)
+    {
+        return (x * accel.ny + y) * accel.nz + z;
+    }
+
+    private float GetSignedDistanceToMeshAccelerated(
+        Vector3 worldPoint,
+        MeshAccel accel,
+        int[] triVisit,
+        ref int visitMark)
+    {
+        if (accel.tris == null || accel.tris.Length == 0)
+        {
+            return 0f;
+        }
+
+        float minDistSq = float.PositiveInfinity;
+        int cx = Mathf.Clamp((int)WorldToCell(worldPoint, accel).x, 0, accel.nx - 1);
+        int cy = Mathf.Clamp((int)WorldToCell(worldPoint, accel).y, 0, accel.ny - 1);
+        int cz = Mathf.Clamp((int)WorldToCell(worldPoint, accel).z, 0, accel.nz - 1);
+
+        int maxRadius = Mathf.Max(accel.nx, Mathf.Max(accel.ny, accel.nz));
+        for (int r = 0; r <= maxRadius; r++)
+        {
+            float shellMin = float.PositiveInfinity;
+            int x0 = Mathf.Max(0, cx - r);
+            int x1 = Mathf.Min(accel.nx - 1, cx + r);
+            int y0 = Mathf.Max(0, cy - r);
+            int y1 = Mathf.Min(accel.ny - 1, cy + r);
+            int z0 = Mathf.Max(0, cz - r);
+            int z1 = Mathf.Min(accel.nz - 1, cz + r);
+
+            for (int x = x0; x <= x1; x++)
+            {
+                for (int y = y0; y <= y1; y++)
+                {
+                    for (int z = z0; z <= z1; z++)
+                    {
+                        if (Mathf.Abs(x - cx) != r && Mathf.Abs(y - cy) != r && Mathf.Abs(z - cz) != r)
+                        {
+                            continue;
+                        }
+
+                        Vector3 cellMin = accel.boundsMin + new Vector3(x * accel.cellSize.x, y * accel.cellSize.y, z * accel.cellSize.z);
+                        Vector3 cellMax = cellMin + accel.cellSize;
+                        float cellDistSq = DistanceToAabbSquared(worldPoint, cellMin, cellMax);
+                        shellMin = Mathf.Min(shellMin, cellDistSq);
+                        if (cellDistSq > minDistSq)
+                        {
+                            continue;
+                        }
+
+                        int idx = CellIndex(x, y, z, accel);
+                        int count = accel.cellCounts[idx];
+                        if (count == 0)
+                        {
+                            continue;
+                        }
+
+                        int offset = accel.cellOffsets[idx];
+                        for (int i = 0; i < count; i++)
+                        {
+                            int triIndex = accel.cellTris[offset + i];
+                            if (triVisit[triIndex] == visitMark)
+                            {
+                                continue;
+                            }
+
+                            triVisit[triIndex] = visitMark;
+                            TriangleData tri = accel.tris[triIndex];
+                            float d = PointTriangleDistanceSquared(worldPoint, tri.a, tri.b, tri.c);
+                            if (d < minDistSq)
+                            {
+                                minDistSq = d;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (shellMin > minDistSq)
+            {
+                break;
+            }
+        }
+
+        visitMark++;
+        if (visitMark == int.MaxValue)
+        {
+            System.Array.Clear(triVisit, 0, triVisit.Length);
+            visitMark = 1;
+        }
+
+        float distance = Mathf.Sqrt(minDistSq);
+        bool inside = IsPointInsideMeshAccelerated(worldPoint, accel, triVisit, ref visitMark);
+        return inside ? -distance : distance;
+    }
+
+    private bool IsPointInsideMeshAccelerated(
+        Vector3 point,
+        MeshAccel accel,
+        int[] triVisit,
+        ref int visitMark)
+    {
+        Vector3 dir = new Vector3(1f, 0.123f, 0.037f).normalized;
+        Vector3 origin = point + dir * 0.0001f;
+        if (!RayAabbIntersect(origin, dir, accel.boundsMin, accel.boundsMax, out float tMin, out float tMax))
+        {
+            return false;
+        }
+
+        int hits = 0;
+        float t = Mathf.Max(0f, tMin);
+        Vector3 p = origin + dir * t;
+        Vector3 cell = WorldToCell(p, accel);
+        int x = Mathf.Clamp((int)cell.x, 0, accel.nx - 1);
+        int y = Mathf.Clamp((int)cell.y, 0, accel.ny - 1);
+        int z = Mathf.Clamp((int)cell.z, 0, accel.nz - 1);
+
+        Vector3 nextBoundary = accel.boundsMin + new Vector3((x + 1) * accel.cellSize.x, (y + 1) * accel.cellSize.y, (z + 1) * accel.cellSize.z);
+        Vector3 step = new Vector3(Mathf.Sign(dir.x), Mathf.Sign(dir.y), Mathf.Sign(dir.z));
+        Vector3 tMaxVec = new Vector3(
+            dir.x != 0f ? (nextBoundary.x - p.x) / dir.x : float.PositiveInfinity,
+            dir.y != 0f ? (nextBoundary.y - p.y) / dir.y : float.PositiveInfinity,
+            dir.z != 0f ? (nextBoundary.z - p.z) / dir.z : float.PositiveInfinity
+        );
+        Vector3 tDelta = new Vector3(
+            dir.x != 0f ? accel.cellSize.x / Mathf.Abs(dir.x) : float.PositiveInfinity,
+            dir.y != 0f ? accel.cellSize.y / Mathf.Abs(dir.y) : float.PositiveInfinity,
+            dir.z != 0f ? accel.cellSize.z / Mathf.Abs(dir.z) : float.PositiveInfinity
+        );
+
+        while (t <= tMax)
+        {
+            int idx = CellIndex(x, y, z, accel);
+            int count = accel.cellCounts[idx];
+            int offset = accel.cellOffsets[idx];
+            for (int i = 0; i < count; i++)
+            {
+                int triIndex = accel.cellTris[offset + i];
+                if (triVisit[triIndex] == visitMark)
+                {
+                    continue;
+                }
+
+                triVisit[triIndex] = visitMark;
+                TriangleData tri = accel.tris[triIndex];
+                if (RayIntersectsTriangle(origin, dir, tri.a, tri.b, tri.c, out float hitT))
+                {
+                    if (hitT > 0.0001f)
+                    {
+                        hits++;
+                    }
+                }
+            }
+
+            if (tMaxVec.x < tMaxVec.y)
+            {
+                if (tMaxVec.x < tMaxVec.z)
+                {
+                    x += (int)step.x;
+                    t = tMaxVec.x;
+                    tMaxVec.x += tDelta.x;
+                }
+                else
+                {
+                    z += (int)step.z;
+                    t = tMaxVec.z;
+                    tMaxVec.z += tDelta.z;
+                }
+            }
+            else
+            {
+                if (tMaxVec.y < tMaxVec.z)
+                {
+                    y += (int)step.y;
+                    t = tMaxVec.y;
+                    tMaxVec.y += tDelta.y;
+                }
+                else
+                {
+                    z += (int)step.z;
+                    t = tMaxVec.z;
+                    tMaxVec.z += tDelta.z;
+                }
+            }
+
+            if (x < 0 || y < 0 || z < 0 || x >= accel.nx || y >= accel.ny || z >= accel.nz)
+            {
+                break;
+            }
+        }
+
+        visitMark++;
+        if (visitMark == int.MaxValue)
+        {
+            System.Array.Clear(triVisit, 0, triVisit.Length);
+            visitMark = 1;
+        }
+
+        return (hits % 2) == 1;
+    }
+
+    private bool RayAabbIntersect(Vector3 origin, Vector3 dir, Vector3 min, Vector3 max, out float tMin, out float tMax)
+    {
+        tMin = 0f;
+        tMax = float.MaxValue;
+
+        for (int i = 0; i < 3; i++)
+        {
+            float o = i == 0 ? origin.x : (i == 1 ? origin.y : origin.z);
+            float d = i == 0 ? dir.x : (i == 1 ? dir.y : dir.z);
+            float mn = i == 0 ? min.x : (i == 1 ? min.y : min.z);
+            float mx = i == 0 ? max.x : (i == 1 ? max.y : max.z);
+
+            if (Mathf.Abs(d) < 0.000001f)
+            {
+                if (o < mn || o > mx)
+                {
+                    return false;
+                }
+                continue;
+            }
+
+            float inv = 1f / d;
+            float t1 = (mn - o) * inv;
+            float t2 = (mx - o) * inv;
+            if (t1 > t2)
+            {
+                float temp = t1;
+                t1 = t2;
+                t2 = temp;
+            }
+
+            tMin = Mathf.Max(tMin, t1);
+            tMax = Mathf.Min(tMax, t2);
+            if (tMin > tMax)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private float DistanceToAabbSquared(Vector3 point, Vector3 min, Vector3 max)
+    {
+        float dx = point.x < min.x ? min.x - point.x : (point.x > max.x ? point.x - max.x : 0f);
+        float dy = point.y < min.y ? min.y - point.y : (point.y > max.y ? point.y - max.y : 0f);
+        float dz = point.z < min.z ? min.z - point.z : (point.z > max.z ? point.z - max.z : 0f);
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private bool IsPointInsideMesh(Vector3 point, Vector3[] vertices, int[] triangles)
+    {
+        Vector3 dir = new Vector3(1f, 0.123f, 0.037f).normalized;
+        Vector3 origin = point + dir * 0.0001f;
+        int hits = 0;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            Vector3 a = vertices[triangles[i]];
+            Vector3 b = vertices[triangles[i + 1]];
+            Vector3 c = vertices[triangles[i + 2]];
+            if (RayIntersectsTriangle(origin, dir, a, b, c, out float t))
+            {
+                if (t > 0.0001f)
+                {
+                    hits++;
+                }
+            }
+        }
+
+        return (hits % 2) == 1;
+    }
+
+    private bool RayIntersectsTriangle(Vector3 origin, Vector3 direction, Vector3 a, Vector3 b, Vector3 c, out float t)
+    {
+        const float epsilon = 0.000001f;
+        Vector3 edge1 = b - a;
+        Vector3 edge2 = c - a;
+        Vector3 pvec = Vector3.Cross(direction, edge2);
+        float det = Vector3.Dot(edge1, pvec);
+        if (det > -epsilon && det < epsilon)
+        {
+            t = 0f;
+            return false;
+        }
+
+        float invDet = 1f / det;
+        Vector3 tvec = origin - a;
+        float u = Vector3.Dot(tvec, pvec) * invDet;
+        if (u < 0f || u > 1f)
+        {
+            t = 0f;
+            return false;
+        }
+
+        Vector3 qvec = Vector3.Cross(tvec, edge1);
+        float v = Vector3.Dot(direction, qvec) * invDet;
+        if (v < 0f || u + v > 1f)
+        {
+            t = 0f;
+            return false;
+        }
+
+        t = Vector3.Dot(edge2, qvec) * invDet;
+        return t > epsilon;
+    }
+
+    private float PointTriangleDistanceSquared(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+    {
+        Vector3 ab = b - a;
+        Vector3 ac = c - a;
+        Vector3 ap = p - a;
+        float d1 = Vector3.Dot(ab, ap);
+        float d2 = Vector3.Dot(ac, ap);
+        if (d1 <= 0f && d2 <= 0f)
+        {
+            return ap.sqrMagnitude;
+        }
+
+        Vector3 bp = p - b;
+        float d3 = Vector3.Dot(ab, bp);
+        float d4 = Vector3.Dot(ac, bp);
+        if (d3 >= 0f && d4 <= d3)
+        {
+            return bp.sqrMagnitude;
+        }
+
+        float vc = d1 * d4 - d3 * d2;
+        if (vc <= 0f && d1 >= 0f && d3 <= 0f)
+        {
+            float v = d1 / (d1 - d3);
+            Vector3 proj = a + v * ab;
+            return (p - proj).sqrMagnitude;
+        }
+
+        Vector3 cp = p - c;
+        float d5 = Vector3.Dot(ab, cp);
+        float d6 = Vector3.Dot(ac, cp);
+        if (d6 >= 0f && d5 <= d6)
+        {
+            return cp.sqrMagnitude;
+        }
+
+        float vb = d5 * d2 - d1 * d6;
+        if (vb <= 0f && d2 >= 0f && d6 <= 0f)
+        {
+            float w = d2 / (d2 - d6);
+            Vector3 proj = a + w * ac;
+            return (p - proj).sqrMagnitude;
+        }
+
+        float va = d3 * d6 - d5 * d4;
+        if (va <= 0f && (d4 - d3) >= 0f && (d5 - d6) >= 0f)
+        {
+            float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+            Vector3 proj = b + w * (c - b);
+            return (p - proj).sqrMagnitude;
+        }
+
+        Vector3 normal = Vector3.Cross(ab, ac).normalized;
+        float distance = Mathf.Abs(Vector3.Dot(p - a, normal));
+        return distance * distance;
+    }
+
+    private float GetDistanceToNonConvexMesh(Vector3 worldPoint, Collider collider)
+    {
+        if (collider == null)
+        {
+            return 0f;
+        }
+
+        Bounds bounds = collider.bounds;
+        int mask = 1 << collider.gameObject.layer;
+        float maxDistance = bounds.size.magnitude + 1f;
+        Vector3[] dirs =
+        {
+            Vector3.right, Vector3.left,
+            Vector3.up, Vector3.down,
+            Vector3.forward, Vector3.back
+        };
+
+        float minHit = maxDistance;
+        Vector3 toCenter = bounds.center - worldPoint;
+        float toCenterDistance = toCenter.magnitude;
+        if (toCenterDistance > 0.0001f)
+        {
+            RaycastHit[] centerHits = Physics.RaycastAll(worldPoint, toCenter / toCenterDistance, toCenterDistance + maxDistance, mask, QueryTriggerInteraction.Ignore);
+            for (int h = 0; h < centerHits.Length; h++)
+            {
+                if (centerHits[h].collider == collider)
+                {
+                    minHit = Mathf.Min(minHit, centerHits[h].distance);
+                }
+            }
+        }
+
+        for (int i = 0; i < dirs.Length; i++)
+        {
+            RaycastHit[] hits = Physics.RaycastAll(worldPoint, dirs[i], maxDistance, mask, QueryTriggerInteraction.Ignore);
+            for (int h = 0; h < hits.Length; h++)
+            {
+                if (hits[h].collider == collider)
+                {
+                    minHit = Mathf.Min(minHit, hits[h].distance);
+                }
+            }
+        }
+
+        if (!bounds.Contains(worldPoint) && minHit >= maxDistance)
+        {
+            Vector3 closest = bounds.ClosestPoint(worldPoint);
+            return Vector3.Distance(worldPoint, closest);
+        }
+
+        return minHit;
+    }
+
+    private bool IsPointInsideNonConvexMesh(Vector3 worldPoint, Collider collider)
+    {
+        if (collider == null)
+        {
+            return false;
+        }
+
+        Bounds bounds = collider.bounds;
+        if (!bounds.Contains(worldPoint))
+        {
+            return false;
+        }
+
+        int mask = 1 << collider.gameObject.layer;
+        float extent = bounds.extents.magnitude + 1f;
+        Vector3[] directions =
+        {
+            Vector3.right,
+            Vector3.up,
+            Vector3.forward
+        };
+
+        int insideCount = 0;
+        for (int i = 0; i < directions.Length; i++)
+        {
+            Vector3 dir = directions[i];
+            Vector3 origin = bounds.center - dir * extent;
+            Vector3 toPoint = worldPoint - origin;
+            float distanceToPoint = toPoint.magnitude;
+            if (distanceToPoint <= 0.0001f)
+            {
+                insideCount++;
+                continue;
+            }
+
+            int hits = CountRayHitsToPoint(origin, toPoint / distanceToPoint, distanceToPoint, collider, mask);
+            if ((hits % 2) == 1)
+            {
+                insideCount++;
+            }
+        }
+
+        return insideCount >= 2;
+    }
+
+    private int CountRayHitsToPoint(Vector3 origin, Vector3 direction, float distance, Collider targetCollider, int mask)
+    {
+        RaycastHit[] hits = Physics.RaycastAll(origin, direction, distance, mask, QueryTriggerInteraction.Ignore);
+        int count = 0;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            if (hits[i].collider == targetCollider)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private Color SampleScanColor(
@@ -1448,17 +2287,27 @@ public class Blob : MonoBehaviour
         bool hasVertexColors,
         Color fallback)
     {
+        Vector3 local = targetTransform.InverseTransformPoint(worldPoint);
+        return SampleScanColorLocal(local, vertices, vertexColors, hasVertexColors, fallback);
+    }
+
+    private Color SampleScanColorLocal(
+        Vector3 localPoint,
+        Vector3[] vertices,
+        Color[] vertexColors,
+        bool hasVertexColors,
+        Color fallback)
+    {
         if (!hasVertexColors || vertices.Length == 0)
         {
             return fallback;
         }
 
-        Vector3 local = targetTransform.InverseTransformPoint(worldPoint);
         float best = float.PositiveInfinity;
         int bestIndex = 0;
         for (int i = 0; i < vertices.Length; i++)
         {
-            float d = (vertices[i] - local).sqrMagnitude;
+            float d = (vertices[i] - localPoint).sqrMagnitude;
             if (d < best)
             {
                 best = d;

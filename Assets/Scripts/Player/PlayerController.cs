@@ -14,8 +14,10 @@ public class PlayerController : MonoBehaviour
     [Header("Components")]
     [SerializeField] private Rigidbody rb;
     [SerializeField] private Transform cameraPivot;
+    [SerializeField] private PlayerGraphicObject graphicObject;
 
     [Header("Movement Settings")]
+    [SerializeField] private float MaxSpeed = 20f;
     [SerializeField] public float MoveSpeedMultiplyer = 5f;
     [SerializeField] public float LookSensitivityMultiplyer = 1f;
 
@@ -27,13 +29,24 @@ public class PlayerController : MonoBehaviour
     [SerializeField] public float Size = 1f;
     [SerializeField] private float energyConsumptionMultiplyer = 1f;
 
+    [Header("Graphic Object Settings")]
+    [SerializeField] private float reorientationMultiplyer = 5f;
+
     private InputSystem_Actions inputActions;
+    private Vector2 moveInput;
+    private Vector2 lookInput;
 
     private void Awake()
     {
         if (rb == null)
         {
             rb = GetComponent<Rigidbody>();
+        }
+
+        if (rb != null)
+        {
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         }
 
         inputActions = new InputSystem_Actions();
@@ -57,12 +70,21 @@ public class PlayerController : MonoBehaviour
 
     private void Update()
     {
-        HandleMovementInput();
-        HandleCameraInput();
+        moveInput = inputActions.Player.Move.ReadValue<Vector2>();
+        lookInput = inputActions.Player.Look.ReadValue<Vector2>();
 
         if (IsBraking)
         {
             Brake();
+        }
+
+    }
+
+    private void OnCollisionEnter(Collision collision)
+    {
+        if (collision.collider.CompareTag("Assimilateable"))
+        {
+            Debug.Log("Assimilate");
         }
     }
 
@@ -70,25 +92,56 @@ public class PlayerController : MonoBehaviour
     {
         if (rb == null) return;
 
-        Vector2 moveInput = inputActions.Player.Move.ReadValue<Vector2>();
-        
+        float dt = Time.fixedDeltaTime;
+
+        RigidbodyVelocity rigidbodyVelocity = new RigidbodyVelocity 
+        { 
+            Linear = rb.linearVelocity, 
+            Angular = rb.angularVelocity 
+        };
+
+
+        bool isMoving = false;
         if (CurrentEnergyAmount > 0f)
         {
             Vector2 movement = new Vector3(moveInput.x, moveInput.y) * MoveSpeedMultiplyer;
-            CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * Time.deltaTime;
+            CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * dt;
 
-            rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
+            if (rigidbodyVelocity.Linear.magnitude != 0f)
+            {
+                isMoving = true;
+            }
+
+            if (rigidbodyVelocity.Linear.magnitude < MaxSpeed * Size)
+            {
+                rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
+            }
+        }
+
+        if (graphicObject != null)
+        {
+            if (cameraPivot == null || !isMoving) return;
+            //graphicObject.Reorient(cameraPivot.rotation, Time.deltaTime, rb.linearVelocity.magnitude * reorientationMultiplyer);
         }
     }
 
     private void HandleCameraInput()
     {
-        Vector2 cameraInput = inputActions.Player.Look.ReadValue<Vector2>();
-
         if (cameraPivot == null) return;
 
-        // Horizontale Rotation (Spieler dreht sich um Y-Achse)
-        transform.Rotate(Vector3.up, cameraInput.x * LookSensitivityMultiplyer * Time.deltaTime);
+        float dt = Time.fixedDeltaTime;
+        Quaternion originalRotation = rb != null ? rb.rotation : transform.rotation;
+
+        // Horizontale Rotation (Spieler dreht sich um Y-Achse) via Rigidbody
+        float yawDelta = lookInput.x * LookSensitivityMultiplyer * dt;
+        if (rb != null)
+        {
+            rb.MoveRotation(rb.rotation * Quaternion.Euler(0f, yawDelta, 0f));
+        }
+        else
+        {
+            transform.Rotate(Vector3.up, yawDelta);
+        }
 
         // Vertikale Rotation (Kamera neigt sich um X-Achse)
         Vector3 currentRotation = cameraPivot.localEulerAngles;
@@ -99,11 +152,22 @@ public class PlayerController : MonoBehaviour
             currentXRotation -= 360f;
 
         // Berechne neue X-Rotation und begrenze sie
-        float newXRotation = currentXRotation - cameraInput.y * LookSensitivityMultiplyer * Time.deltaTime;
+        float newXRotation = currentXRotation - lookInput.y * LookSensitivityMultiplyer * dt;
         newXRotation = Mathf.Clamp(newXRotation, -80f, 80f);
 
         // Wende die neue Rotation an
         cameraPivot.localEulerAngles = new Vector3(newXRotation, 0f, 0f);
+
+        if(graphicObject != null)
+        {
+            graphicObject.Rotate(originalRotation);
+        }
+    }
+
+    private void FixedUpdate()
+    {
+        HandleMovementInput();
+        HandleCameraInput();
     }
 
     private void Brake()

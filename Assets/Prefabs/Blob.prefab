@@ -202,7 +202,7 @@ MonoBehaviour:
   fillSolidOnStart: 1
   regenerateOnValidate: 1
   fillColor: {r: 0, g: 1, b: 0.18392253, a: 1}
-  useGradientNormals: 0
+  useGradientNormals: 1
   scanlineLayersPerSecond: 1
   scanlineShape: 1
   scanlineShapeScaleX: 1
@@ -216,6 +216,11 @@ MonoBehaviour:
   scanlinePauseBudgetSeconds: 5
   scanDistanceMax: 2
   scanTarget: {fileID: 0}
+  scanUseMeshDistance: 0
+  scanUseSurfaceVoxelization: 0
+  scanUseRaycastToCenter: 1
+  scanSurfaceSealVoxels: 0
+  scanSurfaceThickness: 0.25
   scanUseParallel: 1
 --- !u!1 &4108689840490659313
 GameObject:

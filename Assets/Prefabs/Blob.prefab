@@ -11,7 +11,6 @@ GameObject:
   - component: {fileID: 3899963214602629336}
   - component: {fileID: 2285006731448733}
   - component: {fileID: 6612543017558785862}
-  - component: {fileID: 4012106942917026832}
   m_Layer: 0
   m_Name: Cylinder
   m_TagString: Untagged
@@ -91,29 +90,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!136 &4012106942917026832
-CapsuleCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 850627191591022759}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 2
-  m_Radius: 0.5000001
-  m_Height: 2
-  m_Direction: 1
-  m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &3522030675163755168
 GameObject:
   m_ObjectHideFlags: 0
@@ -219,9 +195,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 56352292db5ef41f3b9b00e9b9bd42ad, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Blob
-  size: {x: 16, y: 16, z: 16}
-  voxelSize: 1
-  isoLevel: 0.206
+  size: {x: 32, y: 32, z: 32}
+  voxelSize: 0.5
+  isoLevel: 0.2
   generateOnStart: 1
   fillSolidOnStart: 1
   regenerateOnValidate: 1
@@ -234,6 +210,12 @@ MonoBehaviour:
   scanlineCubePreview: {fileID: 2209850592344550144}
   scanlineCylinderPreview: {fileID: 3899963214602629336}
   scanlinePreviewScale: 1
+  scanlineMouseScaleSensitivity: 0.002
+  scanlineScrollScaleSensitivity: 0.001
+  scanlinePauseBudgetSeconds: 5
+  scanDistanceMax: 2
+  scanTarget: {fileID: 0}
+  scanUseParallel: 1
 --- !u!1 &4108689840490659313
 GameObject:
   m_ObjectHideFlags: 0
@@ -245,7 +227,6 @@ GameObject:
   - component: {fileID: 2209850592344550144}
   - component: {fileID: 6126324961065203571}
   - component: {fileID: 2539665735989240267}
-  - component: {fileID: 290120760331212119}
   m_Layer: 0
   m_Name: Cube
   m_TagString: Untagged
@@ -325,24 +306,3 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!65 &290120760331212119
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4108689840490659313}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}

@@ -729,38 +729,6 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: size.x
-      value: 32
-      objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: size.y
-      value: 32
-      objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: size.z
-      value: 32
-      objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: isoLevel
-      value: 0.2
-      objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: voxelSize
-      value: 0.5
-      objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: scanTarget
-      value: 
-      objectReference: {fileID: 6407422021090330367}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: scanUseParallel
-      value: 1
-      objectReference: {fileID: 0}
-    - target: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
-      propertyPath: scanSmoothingBand
-      value: 0.2
-      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []

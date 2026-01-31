@@ -22,6 +22,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] public float MoveSpeedMultiplyer = 5f;
     [SerializeField] private float movementDeadzone = 0.1f;
     [SerializeField] public float LookSensitivityMultiplyer = 1f;
+    private float lastSpeed = 0f;
 
     [SerializeField] public float BrakeStrength = 0.1f;
     private bool IsBraking = false;
@@ -180,9 +181,13 @@ public class PlayerController : MonoBehaviour
         {
             if (cameraPivot == null || !isMoving) return;
             
-            Debug.Log("Reorient Graphic Object");
-            graphicObject.Reorient(cameraPivot.forward, Time.deltaTime, speed * reorientationMultiplyer);
+            if (speed > lastSpeed)
+            {
+                graphicObject.Reorient(cameraPivot.forward, Time.deltaTime, speed * reorientationMultiplyer);
+            }
         }
+
+        lastSpeed = speed;
     }
 
     private void HandleCameraInput()
@@ -205,7 +210,6 @@ public class PlayerController : MonoBehaviour
 
         if (graphicObject != null)
         {
-            Debug.Log("Rotate Graphic Object Yaw");
             graphicObject.RotateYaw(-yawDelta);
         }
 

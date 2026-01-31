@@ -15,6 +15,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Rigidbody rb;
     [SerializeField] private Transform cameraPivot;
     [SerializeField] private PlayerGraphicObject graphicObject;
+    [SerializeField] private Blob blob;
 
     [Header("Movement Settings")]
     [SerializeField] private float MaxSpeed = 20f;
@@ -41,6 +42,15 @@ public class PlayerController : MonoBehaviour
         if (rb == null)
         {
             rb = GetComponent<Rigidbody>();
+        }
+
+        if (blob == null)
+        {
+            blob = GetComponent<Blob>();
+            if (blob == null)
+            {
+                blob = GetComponentInChildren<Blob>();
+            }
         }
 
         if (rb != null)
@@ -84,8 +94,45 @@ public class PlayerController : MonoBehaviour
     {
         if (collision.collider.CompareTag("Assimilateable"))
         {
-            Debug.Log("Assimilate");
+            HandleAssimilateCollision(collision.collider);
         }
+    }
+
+    private void HandleAssimilateCollision(Collider hitCollider)
+    {
+        if (blob == null || hitCollider == null)
+        {
+            return;
+        }
+
+        GameObject target = ResolveAssimilateTarget(hitCollider);
+        if (target == null)
+        {
+            return;
+        }
+
+        blob.ScanObjectToGrid(target);
+        blob.ApplyScanColorsToGrid();
+        blob.RebuildMesh();
+        float bestRotationDegrees;
+        float score = blob.CompareToScanGrid(8, true, out bestRotationDegrees);
+        Debug.Log($"Assimilate compare score: {score:F3} (best rotation {bestRotationDegrees:F1} deg) vs {target.name}");
+    }
+
+    private GameObject ResolveAssimilateTarget(Collider hitCollider)
+    {
+        MeshFilter meshFilter = hitCollider.GetComponentInParent<MeshFilter>();
+        if (meshFilter != null)
+        {
+            return meshFilter.gameObject;
+        }
+
+        if (hitCollider.attachedRigidbody != null)
+        {
+            return hitCollider.attachedRigidbody.gameObject;
+        }
+
+        return hitCollider.gameObject;
     }
 
     private void HandleMovementInput()

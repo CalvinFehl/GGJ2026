@@ -28,6 +28,7 @@ public class Blob : MonoBehaviour
     public bool fillSolidOnStart = true;
     public bool regenerateOnValidate = true;
     public Color fillColor = Color.white;
+    public bool useGradientNormals = false;
 
     [Header("Scanline")]
     public float scanlineLayersPerSecond = 2f;
@@ -668,6 +669,10 @@ public class Blob : MonoBehaviour
         EnsureScanGrid();
         MeshFilter meshFilterTarget = target.GetComponent<MeshFilter>();
         Mesh meshTarget = meshFilterTarget != null ? meshFilterTarget.sharedMesh : null;
+        if (meshTarget != null && !meshTarget.isReadable)
+        {
+            meshTarget = null;
+        }
 
         MeshRenderer rendererTarget = target.GetComponent<MeshRenderer>();
         Color fallbackColor = rendererTarget != null && rendererTarget.sharedMaterial != null
@@ -792,7 +797,14 @@ public class Blob : MonoBehaviour
 
         if (probeObject != null)
         {
-            DestroyImmediate(probeObject);
+            if (Application.isPlaying)
+            {
+                Destroy(probeObject);
+            }
+            else
+            {
+                DestroyImmediate(probeObject);
+            }
         }
     }
 
@@ -924,8 +936,8 @@ public class Blob : MonoBehaviour
         var triangles = new List<int>(4096);
         var vertexColors = new List<Color>(2048);
         var vertexColorCounts = new List<int>(2048);
-        var vertexNormals = new List<Vector3>(2048);
-        var vertexNormalCounts = new List<int>(2048);
+        List<Vector3> vertexNormals = useGradientNormals ? new List<Vector3>(2048) : null;
+        List<int> vertexNormalCounts = useGradientNormals ? new List<int>(2048) : null;
         var vertexLookup = new Dictionary<VertexKey, int>(4096);
         var cube = new float[8];
         var edgeVertex = new Vector3[12];
@@ -974,10 +986,14 @@ public class Blob : MonoBehaviour
                         float offset = GetOffset(cube[v0], cube[v1]);
                         Vector3 p0 = basePos + new Vector3(VertexOffset[v0, 0], VertexOffset[v0, 1], VertexOffset[v0, 2]);
                         Vector3 p1 = basePos + new Vector3(VertexOffset[v1, 0], VertexOffset[v1, 1], VertexOffset[v1, 2]);
-                        edgeVertex[i] = Vector3.Lerp(p0, p1, offset) * voxelSize;
-                        Color c0 = GetColorSafe(x + VertexOffset[v0, 0], y + VertexOffset[v0, 1], z + VertexOffset[v0, 2]);
-                        Color c1 = GetColorSafe(x + VertexOffset[v1, 0], y + VertexOffset[v1, 1], z + VertexOffset[v1, 2]);
-                        edgeColor[i] = Color.Lerp(c0, c1, offset);
+                        Vector3 pos = Vector3.Lerp(p0, p1, offset);
+                        edgeVertex[i] = pos * voxelSize;
+                        Vector3 colorPos = new Vector3(x, y, z) + Vector3.Lerp(
+                            new Vector3(VertexOffset[v0, 0], VertexOffset[v0, 1], VertexOffset[v0, 2]),
+                            new Vector3(VertexOffset[v1, 0], VertexOffset[v1, 1], VertexOffset[v1, 2]),
+                            offset
+                        );
+                        edgeColor[i] = SampleColorByDensity(colorPos.x, colorPos.y, colorPos.z);
                     }
 
                     for (int i = 0; i < 16; i += 3)
@@ -1010,14 +1026,20 @@ public class Blob : MonoBehaviour
 
         mesh.SetVertices(vertices);
         mesh.SetTriangles(triangles, 0);
-        for (int i = 0; i < vertexNormals.Count; i++)
-        {
-            Vector3 n = vertexNormals[i];
-            vertexNormals[i] = n.sqrMagnitude > 0.000001f ? n.normalized : Vector3.up;
-        }
-
         mesh.SetColors(vertexColors);
-        mesh.SetNormals(vertexNormals);
+        if (useGradientNormals && vertexNormals != null)
+        {
+            for (int i = 0; i < vertexNormals.Count; i++)
+            {
+                Vector3 n = vertexNormals[i];
+                vertexNormals[i] = n.sqrMagnitude > 0.000001f ? n.normalized : Vector3.up;
+            }
+            mesh.SetNormals(vertexNormals);
+        }
+        else
+        {
+            mesh.RecalculateNormals();
+        }
         mesh.RecalculateBounds();
         meshFilter.sharedMesh = mesh;
     }
@@ -1040,10 +1062,13 @@ public class Blob : MonoBehaviour
             colors[index] = (colors[index] * count + color) / (count + 1);
             colorCounts[index] = count + 1;
 
-            int ncount = normalCounts[index];
-            Vector3 normal = ComputeNormal(position);
-            normals[index] = (normals[index] * ncount + normal) / (ncount + 1);
-            normalCounts[index] = ncount + 1;
+            if (normals != null && normalCounts != null)
+            {
+                int ncount = normalCounts[index];
+                Vector3 normal = ComputeNormal(position);
+                normals[index] = (normals[index] * ncount + normal) / (ncount + 1);
+                normalCounts[index] = ncount + 1;
+            }
             return index;
         }
 
@@ -1051,8 +1076,11 @@ public class Blob : MonoBehaviour
         vertices.Add(position);
         colors.Add(color);
         colorCounts.Add(1);
-        normals.Add(ComputeNormal(position));
-        normalCounts.Add(1);
+        if (normals != null && normalCounts != null)
+        {
+            normals.Add(ComputeNormal(position));
+            normalCounts.Add(1);
+        }
         lookup.Add(key, newIndex);
         return newIndex;
     }
@@ -1425,6 +1453,108 @@ public class Blob : MonoBehaviour
         return Color.Lerp(c0, c1, tz);
     }
 
+    private Color SampleColorField(float x, float y, float z)
+    {
+        if (colors == null || size.x <= 0 || size.y <= 0 || size.z <= 0)
+        {
+            return Color.black;
+        }
+
+        float fx = x;
+        float fy = y;
+        float fz = z;
+
+        int x0 = Mathf.FloorToInt(Mathf.Clamp(fx, 0f, size.x - 1f));
+        int y0 = Mathf.FloorToInt(Mathf.Clamp(fy, 0f, size.y - 1f));
+        int z0 = Mathf.FloorToInt(Mathf.Clamp(fz, 0f, size.z - 1f));
+        int x1 = Mathf.Clamp(x0 + 1, 0, size.x - 1);
+        int y1 = Mathf.Clamp(y0 + 1, 0, size.y - 1);
+        int z1 = Mathf.Clamp(z0 + 1, 0, size.z - 1);
+
+        float tx = Mathf.Clamp01(fx - x0);
+        float ty = Mathf.Clamp01(fy - y0);
+        float tz = Mathf.Clamp01(fz - z0);
+
+        Color c000 = colors[x0, y0, z0];
+        Color c100 = colors[x1, y0, z0];
+        Color c010 = colors[x0, y1, z0];
+        Color c110 = colors[x1, y1, z0];
+        Color c001 = colors[x0, y0, z1];
+        Color c101 = colors[x1, y0, z1];
+        Color c011 = colors[x0, y1, z1];
+        Color c111 = colors[x1, y1, z1];
+
+        Color c00 = Color.Lerp(c000, c100, tx);
+        Color c10 = Color.Lerp(c010, c110, tx);
+        Color c01 = Color.Lerp(c001, c101, tx);
+        Color c11 = Color.Lerp(c011, c111, tx);
+        Color c0 = Color.Lerp(c00, c10, ty);
+        Color c1 = Color.Lerp(c01, c11, ty);
+        return Color.Lerp(c0, c1, tz);
+    }
+
+    private Color SampleColorByDensity(float x, float y, float z)
+    {
+        if (colors == null || voxels == null || size.x <= 0 || size.y <= 0 || size.z <= 0)
+        {
+            return Color.black;
+        }
+
+        float fx = Mathf.Clamp(x, 0f, size.x - 1f);
+        float fy = Mathf.Clamp(y, 0f, size.y - 1f);
+        float fz = Mathf.Clamp(z, 0f, size.z - 1f);
+
+        int x0 = Mathf.FloorToInt(fx);
+        int y0 = Mathf.FloorToInt(fy);
+        int z0 = Mathf.FloorToInt(fz);
+        int x1 = Mathf.Min(x0 + 1, size.x - 1);
+        int y1 = Mathf.Min(y0 + 1, size.y - 1);
+        int z1 = Mathf.Min(z0 + 1, size.z - 1);
+
+        float tx = fx - x0;
+        float ty = fy - y0;
+        float tz = fz - z0;
+
+        float w000 = Mathf.Max(0f, voxels[x0, y0, z0] - isoLevel);
+        float w100 = Mathf.Max(0f, voxels[x1, y0, z0] - isoLevel);
+        float w010 = Mathf.Max(0f, voxels[x0, y1, z0] - isoLevel);
+        float w110 = Mathf.Max(0f, voxels[x1, y1, z0] - isoLevel);
+        float w001 = Mathf.Max(0f, voxels[x0, y0, z1] - isoLevel);
+        float w101 = Mathf.Max(0f, voxels[x1, y0, z1] - isoLevel);
+        float w011 = Mathf.Max(0f, voxels[x0, y1, z1] - isoLevel);
+        float w111 = Mathf.Max(0f, voxels[x1, y1, z1] - isoLevel);
+
+        float wx0 = Mathf.Lerp(w000, w100, tx);
+        float wx1 = Mathf.Lerp(w010, w110, tx);
+        float wx2 = Mathf.Lerp(w001, w101, tx);
+        float wx3 = Mathf.Lerp(w011, w111, tx);
+        float wy0 = Mathf.Lerp(wx0, wx1, ty);
+        float wy1 = Mathf.Lerp(wx2, wx3, ty);
+        float weight = Mathf.Lerp(wy0, wy1, tz);
+
+        if (weight <= 0f)
+        {
+            return SampleColorField(x, y, z);
+        }
+
+        Color c000 = colors[x0, y0, z0];
+        Color c100 = colors[x1, y0, z0];
+        Color c010 = colors[x0, y1, z0];
+        Color c110 = colors[x1, y1, z0];
+        Color c001 = colors[x0, y0, z1];
+        Color c101 = colors[x1, y0, z1];
+        Color c011 = colors[x0, y1, z1];
+        Color c111 = colors[x1, y1, z1];
+
+        Color c00 = Color.Lerp(c000, c100, tx);
+        Color c10 = Color.Lerp(c010, c110, tx);
+        Color c01 = Color.Lerp(c001, c101, tx);
+        Color c11 = Color.Lerp(c011, c111, tx);
+        Color c0 = Color.Lerp(c00, c10, ty);
+        Color c1 = Color.Lerp(c01, c11, ty);
+        return Color.Lerp(c0, c1, tz);
+    }
+
     private float GetVoxelValueSafe(int x, int y, int z)
     {
         if (!InBounds(x, y, z))
@@ -1437,12 +1567,15 @@ public class Blob : MonoBehaviour
 
     private Color GetColorSafe(int x, int y, int z)
     {
-        if (colors == null || !InBounds(x, y, z))
+        if (colors == null || size.x <= 0 || size.y <= 0 || size.z <= 0)
         {
             return Color.black;
         }
 
-        return colors[x, y, z];
+        int cx = Mathf.Clamp(x, 0, size.x - 1);
+        int cy = Mathf.Clamp(y, 0, size.y - 1);
+        int cz = Mathf.Clamp(z, 0, size.z - 1);
+        return colors[cx, cy, cz];
     }
 
     private Vector3 ComputeNormal(Vector3 position)

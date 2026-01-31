@@ -124,16 +124,81 @@ public class PlayerController : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (collision.collider.CompareTag("Assimilateable"))
+        if (!collision.collider.CompareTag("Assimilateable"))
         {
-           // HandleAssimilateCollision(collision.collider);
-            GrowInSize(Size + 0.2f);
+            return;
         }
+
+        Assimilateable assimilateable = collision.collider.GetComponentInParent<Assimilateable>();
+        if (assimilateable == null)
+        {
+            return;
+        }
+
+        float blobVolume = GetBlobVolume();
+        if (blobVolume <= assimilateable.Volume)
+        {
+            return;
+        }
+
+        HandleAssimilateCollision(collision.collider);
+        GrowInSize(GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume));
     }
 
     private void GrowInSize(float targetSize)
     {
         StartCoroutine(GrowInSizeCoroutine(targetSize, growDuration));
+    }
+
+    private float GetBlobVolume()
+    {
+        float scale = GetMaxAbsScale(transform.lossyScale);
+        if (collider != null)
+        {
+            float radius = colliderRadius * Size * scale;
+            if (radius > 0f)
+            {
+                return (4f / 3f) * Mathf.PI * radius * radius * radius;
+            }
+        }
+
+        if (blob != null)
+        {
+            Renderer[] renderers = blob.GetComponentsInChildren<Renderer>();
+            if (renderers.Length > 0)
+            {
+                Bounds combined = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++)
+                {
+                    combined.Encapsulate(renderers[i].bounds);
+                }
+
+                Vector3 size = combined.size;
+                return Mathf.Abs(size.x * size.y * size.z);
+            }
+        }
+
+        return 0f;
+    }
+
+    private float GetTargetSizeFromAssimilateable(float assimilateableVolume, float blobVolume)
+    {
+        float scale = GetMaxAbsScale(transform.lossyScale);
+        float baseRadius = colliderRadius * scale;
+        if (baseRadius <= 0f || blobVolume <= 0f)
+        {
+            return Size + assimilateableVolume;
+        }
+
+        float baseVolume = (4f / 3f) * Mathf.PI * baseRadius * baseRadius * baseRadius;
+        float targetVolume = blobVolume + assimilateableVolume;
+        float targetSize = Mathf.Pow(targetVolume / baseVolume, 1f / 3f);
+        return Mathf.Max(Size, targetSize);
+    }
+
+    private float GetMaxAbsScale(Vector3 scale)
+    {
+        return Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z));
     }
 
     private System.Collections.IEnumerator GrowInSizeCoroutine(float targetSize, float duration)

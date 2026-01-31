@@ -681,28 +681,36 @@ public class Blob : MonoBehaviour
         Vector3[] vertices = meshTarget != null ? meshTarget.vertices : System.Array.Empty<Vector3>();
         bool hasVertexColors = vertexColors != null && vertexColors.Length == vertices.Length && vertices.Length > 0;
 
-        Collider scanCollider = target.GetComponent<Collider>();
-        bool createdCollider = false;
-        if (scanCollider == null)
+        bool useMeshDistance = meshTarget != null && meshTarget.triangles != null && meshTarget.triangles.Length > 0;
+        Vector3[] worldVertices = null;
+        int[] triangles = null;
+
+        Collider scanCollider = null;
+        GameObject probeObject = null;
+        SphereCollider probeCollider = null;
+
+        if (useMeshDistance)
         {
-            if (meshTarget == null)
+            worldVertices = new Vector3[vertices.Length];
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                worldVertices[i] = target.transform.TransformPoint(vertices[i]);
+            }
+            triangles = meshTarget.triangles;
+        }
+        else
+        {
+            scanCollider = target.GetComponent<Collider>();
+            if (scanCollider == null)
             {
                 return;
             }
 
-            MeshCollider meshCollider = target.AddComponent<MeshCollider>();
-            meshCollider.sharedMesh = meshTarget;
-            meshCollider.convex = true;
-            scanCollider = meshCollider;
-            createdCollider = true;
+            probeObject = new GameObject("ScanProbe");
+            probeObject.hideFlags = HideFlags.HideAndDontSave;
+            probeCollider = probeObject.AddComponent<SphereCollider>();
+            probeCollider.radius = Mathf.Max(0.0001f, voxelSize * 0.001f);
         }
-
-        GameObject probeObject = null;
-        SphereCollider probeCollider = null;
-        probeObject = new GameObject("ScanProbe");
-        probeObject.hideFlags = HideFlags.HideAndDontSave;
-        probeCollider = probeObject.AddComponent<SphereCollider>();
-        probeCollider.radius = Mathf.Max(0.0001f, voxelSize * 0.001f);
         Vector3 gridCenter = GetGridCenter();
         Vector3 scanOffset = target.transform.position - transform.position;
 
@@ -715,8 +723,16 @@ public class Blob : MonoBehaviour
                     Vector3 local = new Vector3(x, y, z) - gridCenter;
                     Vector3 world = transform.TransformPoint(local * voxelSize);
                     Vector3 scanWorld = world + scanOffset;
-                    probeObject.transform.position = scanWorld;
-                    float signedDistance = GetSignedDistance(scanWorld, scanCollider, probeCollider);
+                    float signedDistance;
+                    if (useMeshDistance)
+                    {
+                        signedDistance = GetSignedDistanceToMesh(scanWorld, worldVertices, triangles);
+                    }
+                    else
+                    {
+                        probeObject.transform.position = scanWorld;
+                        signedDistance = GetSignedDistance(scanWorld, scanCollider, probeCollider);
+                    }
                     float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
                     scanVoxels[x, y, z] = value;
                     scanColors[x, y, z] = SampleScanColor(scanWorld, target.transform, vertices, vertexColors, hasVertexColors, fallbackColor);
@@ -724,11 +740,10 @@ public class Blob : MonoBehaviour
             }
         }
 
-        if (createdCollider)
+        if (probeObject != null)
         {
-            Destroy(scanCollider);
+            DestroyImmediate(probeObject);
         }
-        DestroyImmediate(probeObject);
     }
 
     public void ApplyScanColorsToGrid()
@@ -1416,21 +1431,32 @@ public class Blob : MonoBehaviour
             return insideFallback ? -distanceFallback : distanceFallback;
         }
 
-        Vector3 closest = collider.ClosestPoint(worldPoint);
-        float distance = Vector3.Distance(worldPoint, closest);
+        MeshCollider meshCollider = collider as MeshCollider;
+        bool isNonConvexMesh = meshCollider != null && !meshCollider.convex;
+        float distance = isNonConvexMesh
+            ? GetDistanceToNonConvexMesh(worldPoint, collider)
+            : Vector3.Distance(worldPoint, collider.ClosestPoint(worldPoint));
 
+        bool inside = false;
         float penetrationDistance = 0f;
-        bool penetrationInside = Physics.ComputePenetration(
-                probe,
-                probe.transform.position,
-                probe.transform.rotation,
-                collider,
-                collider.transform.position,
-                collider.transform.rotation,
-                out _,
-                out penetrationDistance);
+        if (isNonConvexMesh)
+        {
+            inside = IsPointInsideNonConvexMesh(worldPoint, collider);
+        }
+        else
+        {
+            bool penetrationInside = Physics.ComputePenetration(
+                    probe,
+                    probe.transform.position,
+                    probe.transform.rotation,
+                    collider,
+                    collider.transform.position,
+                    collider.transform.rotation,
+                    out _,
+                    out penetrationDistance);
 
-        bool inside = penetrationInside || distance <= 0.0001f;
+            inside = penetrationInside || distance <= 0.0001f;
+        }
         if (inside)
         {
             float insideDistance = penetrationDistance > 0f ? penetrationDistance : Mathf.Max(distance, voxelSize * 0.5f);
@@ -1438,6 +1464,257 @@ public class Blob : MonoBehaviour
         }
 
         return distance;
+    }
+
+    private float GetSignedDistanceToMesh(Vector3 worldPoint, Vector3[] vertices, int[] triangles)
+    {
+        if (vertices == null || triangles == null || triangles.Length == 0)
+        {
+            return 0f;
+        }
+
+        float minDistSq = float.PositiveInfinity;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            Vector3 a = vertices[triangles[i]];
+            Vector3 b = vertices[triangles[i + 1]];
+            Vector3 c = vertices[triangles[i + 2]];
+            float d = PointTriangleDistanceSquared(worldPoint, a, b, c);
+            if (d < minDistSq)
+            {
+                minDistSq = d;
+            }
+        }
+
+        float distance = Mathf.Sqrt(minDistSq);
+        bool inside = IsPointInsideMesh(worldPoint, vertices, triangles);
+        return inside ? -distance : distance;
+    }
+
+    private bool IsPointInsideMesh(Vector3 point, Vector3[] vertices, int[] triangles)
+    {
+        Vector3 dir = new Vector3(1f, 0.123f, 0.037f).normalized;
+        Vector3 origin = point + dir * 0.0001f;
+        int hits = 0;
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            Vector3 a = vertices[triangles[i]];
+            Vector3 b = vertices[triangles[i + 1]];
+            Vector3 c = vertices[triangles[i + 2]];
+            if (RayIntersectsTriangle(origin, dir, a, b, c, out float t))
+            {
+                if (t > 0.0001f)
+                {
+                    hits++;
+                }
+            }
+        }
+
+        return (hits % 2) == 1;
+    }
+
+    private bool RayIntersectsTriangle(Vector3 origin, Vector3 direction, Vector3 a, Vector3 b, Vector3 c, out float t)
+    {
+        const float epsilon = 0.000001f;
+        Vector3 edge1 = b - a;
+        Vector3 edge2 = c - a;
+        Vector3 pvec = Vector3.Cross(direction, edge2);
+        float det = Vector3.Dot(edge1, pvec);
+        if (det > -epsilon && det < epsilon)
+        {
+            t = 0f;
+            return false;
+        }
+
+        float invDet = 1f / det;
+        Vector3 tvec = origin - a;
+        float u = Vector3.Dot(tvec, pvec) * invDet;
+        if (u < 0f || u > 1f)
+        {
+            t = 0f;
+            return false;
+        }
+
+        Vector3 qvec = Vector3.Cross(tvec, edge1);
+        float v = Vector3.Dot(direction, qvec) * invDet;
+        if (v < 0f || u + v > 1f)
+        {
+            t = 0f;
+            return false;
+        }
+
+        t = Vector3.Dot(edge2, qvec) * invDet;
+        return t > epsilon;
+    }
+
+    private float PointTriangleDistanceSquared(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+    {
+        Vector3 ab = b - a;
+        Vector3 ac = c - a;
+        Vector3 ap = p - a;
+        float d1 = Vector3.Dot(ab, ap);
+        float d2 = Vector3.Dot(ac, ap);
+        if (d1 <= 0f && d2 <= 0f)
+        {
+            return ap.sqrMagnitude;
+        }
+
+        Vector3 bp = p - b;
+        float d3 = Vector3.Dot(ab, bp);
+        float d4 = Vector3.Dot(ac, bp);
+        if (d3 >= 0f && d4 <= d3)
+        {
+            return bp.sqrMagnitude;
+        }
+
+        float vc = d1 * d4 - d3 * d2;
+        if (vc <= 0f && d1 >= 0f && d3 <= 0f)
+        {
+            float v = d1 / (d1 - d3);
+            Vector3 proj = a + v * ab;
+            return (p - proj).sqrMagnitude;
+        }
+
+        Vector3 cp = p - c;
+        float d5 = Vector3.Dot(ab, cp);
+        float d6 = Vector3.Dot(ac, cp);
+        if (d6 >= 0f && d5 <= d6)
+        {
+            return cp.sqrMagnitude;
+        }
+
+        float vb = d5 * d2 - d1 * d6;
+        if (vb <= 0f && d2 >= 0f && d6 <= 0f)
+        {
+            float w = d2 / (d2 - d6);
+            Vector3 proj = a + w * ac;
+            return (p - proj).sqrMagnitude;
+        }
+
+        float va = d3 * d6 - d5 * d4;
+        if (va <= 0f && (d4 - d3) >= 0f && (d5 - d6) >= 0f)
+        {
+            float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+            Vector3 proj = b + w * (c - b);
+            return (p - proj).sqrMagnitude;
+        }
+
+        Vector3 normal = Vector3.Cross(ab, ac).normalized;
+        float distance = Mathf.Abs(Vector3.Dot(p - a, normal));
+        return distance * distance;
+    }
+
+    private float GetDistanceToNonConvexMesh(Vector3 worldPoint, Collider collider)
+    {
+        if (collider == null)
+        {
+            return 0f;
+        }
+
+        Bounds bounds = collider.bounds;
+        int mask = 1 << collider.gameObject.layer;
+        float maxDistance = bounds.size.magnitude + 1f;
+        Vector3[] dirs =
+        {
+            Vector3.right, Vector3.left,
+            Vector3.up, Vector3.down,
+            Vector3.forward, Vector3.back
+        };
+
+        float minHit = maxDistance;
+        Vector3 toCenter = bounds.center - worldPoint;
+        float toCenterDistance = toCenter.magnitude;
+        if (toCenterDistance > 0.0001f)
+        {
+            RaycastHit[] centerHits = Physics.RaycastAll(worldPoint, toCenter / toCenterDistance, toCenterDistance + maxDistance, mask, QueryTriggerInteraction.Ignore);
+            for (int h = 0; h < centerHits.Length; h++)
+            {
+                if (centerHits[h].collider == collider)
+                {
+                    minHit = Mathf.Min(minHit, centerHits[h].distance);
+                }
+            }
+        }
+
+        for (int i = 0; i < dirs.Length; i++)
+        {
+            RaycastHit[] hits = Physics.RaycastAll(worldPoint, dirs[i], maxDistance, mask, QueryTriggerInteraction.Ignore);
+            for (int h = 0; h < hits.Length; h++)
+            {
+                if (hits[h].collider == collider)
+                {
+                    minHit = Mathf.Min(minHit, hits[h].distance);
+                }
+            }
+        }
+
+        if (!bounds.Contains(worldPoint) && minHit >= maxDistance)
+        {
+            Vector3 closest = bounds.ClosestPoint(worldPoint);
+            return Vector3.Distance(worldPoint, closest);
+        }
+
+        return minHit;
+    }
+
+    private bool IsPointInsideNonConvexMesh(Vector3 worldPoint, Collider collider)
+    {
+        if (collider == null)
+        {
+            return false;
+        }
+
+        Bounds bounds = collider.bounds;
+        if (!bounds.Contains(worldPoint))
+        {
+            return false;
+        }
+
+        int mask = 1 << collider.gameObject.layer;
+        float extent = bounds.extents.magnitude + 1f;
+        Vector3[] directions =
+        {
+            Vector3.right,
+            Vector3.up,
+            Vector3.forward
+        };
+
+        int insideCount = 0;
+        for (int i = 0; i < directions.Length; i++)
+        {
+            Vector3 dir = directions[i];
+            Vector3 origin = bounds.center - dir * extent;
+            Vector3 toPoint = worldPoint - origin;
+            float distanceToPoint = toPoint.magnitude;
+            if (distanceToPoint <= 0.0001f)
+            {
+                insideCount++;
+                continue;
+            }
+
+            int hits = CountRayHitsToPoint(origin, toPoint / distanceToPoint, distanceToPoint, collider, mask);
+            if ((hits % 2) == 1)
+            {
+                insideCount++;
+            }
+        }
+
+        return insideCount >= 2;
+    }
+
+    private int CountRayHitsToPoint(Vector3 origin, Vector3 direction, float distance, Collider targetCollider, int mask)
+    {
+        RaycastHit[] hits = Physics.RaycastAll(origin, direction, distance, mask, QueryTriggerInteraction.Ignore);
+        int count = 0;
+        for (int i = 0; i < hits.Length; i++)
+        {
+            if (hits[i].collider == targetCollider)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private Color SampleScanColor(

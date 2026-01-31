@@ -386,8 +386,8 @@ public class Blob : MonoBehaviour
         inputActions.Player.Jump.performed += OnJumpPerformed;
         inputActions.Player.Jump.canceled += OnJumpCanceled;
         inputActions.Player.Interact.started += OnToggleShape;
-        inputActions.UI.RightClick.performed += OnRightClickPerformed;
-        inputActions.UI.RightClick.canceled += OnRightClickCanceled;
+        inputActions.Player.ScanMode.performed += OnScanModePerformed;
+        inputActions.Player.ScanMode.canceled += OnScanModeCanceled;
     }
 
     private void OnDisable()
@@ -400,26 +400,15 @@ public class Blob : MonoBehaviour
         inputActions.Player.Jump.performed -= OnJumpPerformed;
         inputActions.Player.Jump.canceled -= OnJumpCanceled;
         inputActions.Player.Interact.started -= OnToggleShape;
-        inputActions.UI.RightClick.performed -= OnRightClickPerformed;
-        inputActions.UI.RightClick.canceled -= OnRightClickCanceled;
+        inputActions.Player.ScanMode.performed -= OnScanModePerformed;
+        inputActions.Player.ScanMode.canceled -= OnScanModeCanceled;
         inputActions.Disable();
     }
 
     private void Update()
     {
-        SyncRightMouseHeld();
         HandleScanlineInput();
         UpdateScanlinePreviewLive();
-    }
-
-    private void SyncRightMouseHeld()
-    {
-        if (Mouse.current == null)
-        {
-            return;
-        }
-
-        isRightMouseHeld = Mouse.current.rightButton.isPressed;
     }
 
     private void HandleScanlineInput()
@@ -1224,12 +1213,12 @@ public class Blob : MonoBehaviour
         scanlineShape = scanlineShape == ScanlineShape.Cube ? ScanlineShape.Cylinder : ScanlineShape.Cube;
     }
 
-    private void OnRightClickPerformed(InputAction.CallbackContext context)
+    private void OnScanModePerformed(InputAction.CallbackContext context)
     {
         isRightMouseHeld = true;
     }
 
-    private void OnRightClickCanceled(InputAction.CallbackContext context)
+    private void OnScanModeCanceled(InputAction.CallbackContext context)
     {
         isRightMouseHeld = false;
     }

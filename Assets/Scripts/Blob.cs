@@ -41,7 +41,6 @@ public class Blob : MonoBehaviour
     public float scanlineShapeRotationDegrees = 0f;
     public Transform scanlineCubePreview;
     public Transform scanlineCylinderPreview;
-    public float scanlinePreviewScale = 1f;
 
     [Header("Scanline Input")]
     public float scanlineMouseScaleSensitivity = 0.002f;
@@ -484,7 +483,6 @@ public class Blob : MonoBehaviour
         scanlineLayersPerSecond = Mathf.Max(0.01f, scanlineLayersPerSecond);
         scanlineShapeScaleX = Mathf.Clamp01(scanlineShapeScaleX);
         scanlineShapeScaleZ = Mathf.Clamp01(scanlineShapeScaleZ);
-        scanlinePreviewScale = Mathf.Max(0.01f, scanlinePreviewScale);
         scanlineMouseScaleSensitivity = Mathf.Max(0f, scanlineMouseScaleSensitivity);
         scanlineScrollScaleSensitivity = Mathf.Max(0f, scanlineScrollScaleSensitivity);
         scanlinePauseBudgetSeconds = Mathf.Max(0f, scanlinePauseBudgetSeconds);
@@ -1294,11 +1292,17 @@ public class Blob : MonoBehaviour
         localPosition *= voxelSize;
         active.position = transform.TransformPoint(localPosition);
         active.rotation = transform.rotation * Quaternion.Euler(0f, scanlineShapeRotationDegrees, 0f);
-        float scale = scanlinePreviewScale;
+        float height = voxelSize * 0.1f;
+        Vector2 previewHalfExtents = halfExtents;
+        if (scanlineShape == ScanlineShape.Cylinder)
+        {
+            // The cylinder uses a 1 - distance falloff; the iso surface is at (1 - isoLevel).
+            previewHalfExtents *= Mathf.Max(0f, 1f - isoLevel);
+        }
         active.localScale = new Vector3(
-            halfExtents.x * 2f * voxelSize * scale,
-            voxelSize * scale,
-            halfExtents.y * 2f * voxelSize * scale
+            previewHalfExtents.x * 2f * voxelSize,
+            height,
+            previewHalfExtents.y * 2f * voxelSize
         );
     }
 

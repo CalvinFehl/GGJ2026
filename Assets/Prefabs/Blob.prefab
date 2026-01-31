@@ -66,7 +66,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  - {fileID: 2100000, guid: 4e1f7383f61d34233988a46059356c4c, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -210,7 +210,6 @@ MonoBehaviour:
   scanlineShapeRotationDegrees: 0
   scanlineCubePreview: {fileID: 2209850592344550144}
   scanlineCylinderPreview: {fileID: 3899963214602629336}
-  scanlinePreviewScale: 1
   scanlineMouseScaleSensitivity: 0.002
   scanlineScrollScaleSensitivity: 0.001
   scanlinePauseBudgetSeconds: 5
@@ -288,7 +287,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 31321ba15b8f8eb4c954353edc038b1d, type: 2}
+  - {fileID: 2100000, guid: 4e1f7383f61d34233988a46059356c4c, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0

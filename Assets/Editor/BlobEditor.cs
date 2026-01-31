@@ -42,7 +42,21 @@ public class BlobEditor : Editor
         {
             Undo.RecordObject(blob, "Scan Target To Grid");
             blob.ScanObjectToGrid(blob.scanTarget);
+            EditorUtility.SetDirty(blob);
+        }
+
+        if (GUILayout.Button("Apply Scan Grid To Mesh"))
+        {
+            Undo.RecordObject(blob, "Apply Scan Grid To Mesh");
             blob.ApplyScanGridToMesh();
+            EditorUtility.SetDirty(blob);
+        }
+
+        if (GUILayout.Button("Apply Scan Colors To Mesh"))
+        {
+            Undo.RecordObject(blob, "Apply Scan Colors To Mesh");
+            blob.ApplyScanColorsToGrid();
+            blob.RebuildMesh();
             EditorUtility.SetDirty(blob);
         }
     }

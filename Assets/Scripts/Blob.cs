@@ -67,7 +67,12 @@ public class Blob : MonoBehaviour
     private MeshAccel cachedScanAccel;
     private Vector3[] cachedScanVertices;
     private int[] cachedScanTriangles;
+    private Vector3[] cachedScanWorldVertices;
+    private Bounds cachedScanWorldBounds;
     private float cachedScanVoxelSize = -1f;
+    private Vector3 cachedScanTargetPosition;
+    private Quaternion cachedScanTargetRotation;
+    private Vector3 cachedScanTargetScale;
     private Mesh mesh;
     private MeshFilter meshFilter;
     private Coroutine scanlineRoutine;
@@ -688,6 +693,13 @@ public class Blob : MonoBehaviour
         Vector3[] vertices = meshTarget != null ? meshTarget.vertices : System.Array.Empty<Vector3>();
         bool hasVertexColors = vertexColors != null && vertexColors.Length == vertices.Length && vertices.Length > 0;
 
+        Transform targetTransform = target.transform;
+        Matrix4x4 targetLocalToWorld = targetTransform.localToWorldMatrix;
+        Matrix4x4 targetWorldToLocal = targetTransform.worldToLocalMatrix;
+        Vector3 targetPosition = targetTransform.position;
+        Quaternion targetRotation = targetTransform.rotation;
+        Vector3 targetScale = targetTransform.lossyScale;
+
         bool canUseMeshDistance = meshTarget != null && meshTarget.triangles != null && meshTarget.triangles.Length > 0;
         MeshAccel meshAccel = new MeshAccel();
         int[] triVisit = null;
@@ -701,13 +713,34 @@ public class Blob : MonoBehaviour
 
         if (useMeshDistance)
         {
-            if (meshTarget != cachedScanMesh || !Mathf.Approximately(cachedScanVoxelSize, voxelSize))
+            bool meshChanged = meshTarget != cachedScanMesh;
+            bool voxelChanged = !Mathf.Approximately(cachedScanVoxelSize, voxelSize);
+            bool transformChanged = targetPosition != cachedScanTargetPosition ||
+                targetRotation != cachedScanTargetRotation ||
+                targetScale != cachedScanTargetScale;
+
+            if (meshChanged)
             {
                 cachedScanMesh = meshTarget;
-                cachedScanVoxelSize = voxelSize;
                 cachedScanVertices = meshTarget.vertices;
                 cachedScanTriangles = meshTarget.triangles;
-                cachedScanAccel = BuildMeshAccel(cachedScanVertices, cachedScanTriangles);
+            }
+
+            if (meshChanged || voxelChanged || transformChanged)
+            {
+                if (cachedScanVertices == null || cachedScanTriangles == null)
+                {
+                    cachedScanVertices = meshTarget.vertices;
+                    cachedScanTriangles = meshTarget.triangles;
+                }
+
+                cachedScanWorldVertices = TransformVertices(cachedScanVertices, targetLocalToWorld);
+                cachedScanWorldBounds = ComputeBounds(cachedScanWorldVertices);
+                cachedScanAccel = BuildMeshAccel(cachedScanWorldVertices, cachedScanTriangles);
+                cachedScanVoxelSize = voxelSize;
+                cachedScanTargetPosition = targetPosition;
+                cachedScanTargetRotation = targetRotation;
+                cachedScanTargetScale = targetScale;
             }
 
             vertices = cachedScanVertices;
@@ -727,22 +760,13 @@ public class Blob : MonoBehaviour
             probeCollider.radius = Mathf.Max(0.0001f, voxelSize * 0.001f);
         }
         Vector3 gridCenter = GetGridCenter();
-        Vector3 scanOffset = target.transform.position - transform.position;
-        Matrix4x4 blobToWorld = Matrix4x4
-            .TRS(transform.position, Quaternion.identity, transform.lossyScale);
-        Matrix4x4 blobWorldToLocal = blobToWorld.inverse;
-        Matrix4x4 targetWorldToLocal = Matrix4x4
-            .TRS(target.transform.position, Quaternion.identity, target.transform.lossyScale)
-            .inverse;
-        Matrix4x4 targetLocalToWorld = Matrix4x4
-            .TRS(target.transform.position, Quaternion.identity, target.transform.lossyScale);
-        Matrix4x4 targetLocalToWorldAligned = Matrix4x4
-            .TRS(transform.position, Quaternion.identity, target.transform.lossyScale);
-        Vector3 targetScale = target.transform.lossyScale;
-        float targetScaleFactor = Mathf.Max(
-            Mathf.Abs(targetScale.x),
-            Mathf.Abs(targetScale.y),
-            Mathf.Abs(targetScale.z)
+        Vector3 scanOffset = targetPosition - transform.position;
+        Matrix4x4 blobToWorld = transform.localToWorldMatrix;
+        Matrix4x4 blobWorldToLocal = transform.worldToLocalMatrix;
+        Matrix4x4 targetLocalToWorldAligned = targetLocalToWorld;
+        targetLocalToWorldAligned.SetColumn(
+            3,
+            new Vector4(transform.position.x, transform.position.y, transform.position.z, 1f)
         );
 
         if (scanUseRaycastToCenter)
@@ -766,12 +790,12 @@ public class Blob : MonoBehaviour
             return;
         }
         Bounds meshBounds = default;
-        float localMaxDistanceSq = 0f;
+        float maxDistanceSq = 0f;
         if (useMeshDistance)
         {
-            meshBounds = meshTarget.bounds;
-            float localMaxDistance = scanDistanceMax / Mathf.Max(0.0001f, targetScaleFactor);
-            localMaxDistanceSq = localMaxDistance * localMaxDistance;
+            meshBounds = cachedScanWorldBounds;
+            float maxDistance = scanDistanceMax;
+            maxDistanceSq = maxDistance * maxDistance;
         }
 
         if (useMeshDistance && scanUseSurfaceVoxelization)
@@ -809,18 +833,17 @@ public class Blob : MonoBehaviour
                         Vector3 local = new Vector3(x, y, z) - gridCenter;
                         Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
                         Vector3 scanWorld = world + scanOffset;
-                        Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
-                        if (meshBounds.SqrDistance(scanLocal) > localMaxDistanceSq)
+                        Vector3 scanLocalColor = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
+                        if (meshBounds.SqrDistance(scanWorld) > maxDistanceSq)
                         {
                             scanVoxels[x, y, z] = 0f;
                             scanColors[x, y, z] = fallbackColor;
                             continue;
                         }
-                        float signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisitThread, ref visitMarkThread);
-                        signedDistance *= targetScaleFactor;
+                        float signedDistance = GetSignedDistanceToMeshAccelerated(scanWorld, meshAccel, triVisitThread, ref visitMarkThread);
                         float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
                         scanVoxels[x, y, z] = value;
-                        scanColors[x, y, z] = SampleScanColorLocal(scanLocal, vertices, vertexColors, hasVertexColors, fallbackColor);
+                        scanColors[x, y, z] = SampleScanColorLocal(scanLocalColor, vertices, vertexColors, hasVertexColors, fallbackColor);
                     }
                 }
 
@@ -844,15 +867,13 @@ public class Blob : MonoBehaviour
                         float signedDistance;
                         if (useMeshDistance)
                         {
-                            Vector3 scanLocal = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
-                            if (meshBounds.SqrDistance(scanLocal) > localMaxDistanceSq)
+                            if (meshBounds.SqrDistance(scanWorld) > maxDistanceSq)
                             {
                                 scanVoxels[x, y, z] = 0f;
                                 scanColors[x, y, z] = fallbackColor;
                                 continue;
                             }
-                            signedDistance = GetSignedDistanceToMeshAccelerated(scanLocal, meshAccel, triVisit, ref visitMark);
-                            signedDistance *= targetScaleFactor;
+                            signedDistance = GetSignedDistanceToMeshAccelerated(scanWorld, meshAccel, triVisit, ref visitMark);
                         }
                         else
                         {
@@ -2049,6 +2070,38 @@ public class Blob : MonoBehaviour
         return accel;
     }
 
+    private static Vector3[] TransformVertices(Vector3[] localVertices, Matrix4x4 localToWorld)
+    {
+        if (localVertices == null || localVertices.Length == 0)
+        {
+            return System.Array.Empty<Vector3>();
+        }
+
+        Vector3[] worldVertices = new Vector3[localVertices.Length];
+        for (int i = 0; i < localVertices.Length; i++)
+        {
+            worldVertices[i] = localToWorld.MultiplyPoint3x4(localVertices[i]);
+        }
+
+        return worldVertices;
+    }
+
+    private static Bounds ComputeBounds(Vector3[] points)
+    {
+        if (points == null || points.Length == 0)
+        {
+            return new Bounds(Vector3.zero, Vector3.zero);
+        }
+
+        Bounds bounds = new Bounds(points[0], Vector3.zero);
+        for (int i = 1; i < points.Length; i++)
+        {
+            bounds.Encapsulate(points[i]);
+        }
+
+        return bounds;
+    }
+
     private Vector3 WorldToCell(Vector3 world, MeshAccel accel)
     {
         Vector3 local = world - accel.boundsMin;
@@ -2590,8 +2643,13 @@ public class Blob : MonoBehaviour
     {
         Bounds bounds = targetCollider.bounds;
         float epsilon = Mathf.Max(0.0001f, voxelSize * 0.05f);
-        Vector3 insidePoint = GetInsidePoint(targetCollider, bounds, epsilon);
-        float rayExtra = bounds.extents.magnitude * 2f;
+        Vector3 centerPoint = bounds.center;
+        float maxRayDistance = Mathf.Max(scanDistanceMax, bounds.extents.magnitude) * 2f;
+        GameObject probeObject = new GameObject("ScanInsideProbe");
+        probeObject.hideFlags = HideFlags.HideAndDontSave;
+        SphereCollider probe = probeObject.AddComponent<SphereCollider>();
+        probe.isTrigger = true;
+        probe.radius = Mathf.Max(epsilon, voxelSize * 0.15f);
 
         for (int x = 0; x < size.x; x++)
         {
@@ -2603,25 +2661,43 @@ public class Blob : MonoBehaviour
                     Vector3 world = blobToWorld.MultiplyPoint3x4(local * voxelSize);
                     Vector3 scanWorld = world + scanOffset;
 
-                    Vector3 toInside = insidePoint - scanWorld;
-                    float distance = toInside.magnitude;
-                    bool inside = distance <= epsilon;
-                    if (!inside && distance > epsilon)
+                    bool inside = false;
+                    float penetrationDistance = 0f;
+                    float insideOffset = voxelSize * 0.25f;
+                    Vector3[] sampleOffsets =
                     {
-                        Vector3 dir = toInside / distance;
-                        float maxDistance = distance + rayExtra;
-                        bool hit = targetCollider.Raycast(new Ray(scanWorld, dir), out RaycastHit hitInfo, maxDistance);
-                        if (hit)
-                        {
-                            inside = hitInfo.distance > distance - epsilon;
-                        }
-                        else
+                        Vector3.zero,
+                        new Vector3(insideOffset, 0f, 0f),
+                        new Vector3(-insideOffset, 0f, 0f),
+                        new Vector3(0f, insideOffset, 0f),
+                        new Vector3(0f, -insideOffset, 0f),
+                        new Vector3(0f, 0f, insideOffset),
+                        new Vector3(0f, 0f, -insideOffset)
+                    };
+                    for (int s = 0; s < sampleOffsets.Length; s++)
+                    {
+                        if (Physics.ComputePenetration(
+                            probe,
+                            scanWorld + sampleOffsets[s],
+                            Quaternion.identity,
+                            targetCollider,
+                            targetCollider.transform.position,
+                            targetCollider.transform.rotation,
+                            out _,
+                            out float samplePenetration) && samplePenetration > 0f)
                         {
                             inside = true;
+                            penetrationDistance = Mathf.Max(penetrationDistance, samplePenetration);
+                            break;
                         }
                     }
 
-                    scanVoxels[x, y, z] = inside ? 1f : 0f;
+                    float surfaceDistance = GetRaycastSurfaceDistance(targetCollider, scanWorld, centerPoint, maxRayDistance, epsilon);
+                    surfaceDistance = Mathf.Min(surfaceDistance, scanDistanceMax);
+                    float signedDistance = inside ? -Mathf.Max(surfaceDistance, penetrationDistance) : surfaceDistance;
+
+                    float value = Mathf.Clamp01(isoLevel - (signedDistance / (2f * scanDistanceMax)));
+                    scanVoxels[x, y, z] = value;
                     Vector3 scanLocalColor = targetWorldToLocal.MultiplyPoint3x4(scanWorld);
                     scanColors[x, y, z] = SampleScanColorLocal(
                         scanLocalColor,
@@ -2633,6 +2709,36 @@ public class Blob : MonoBehaviour
                 }
             }
         }
+
+        if (Application.isPlaying)
+        {
+            Destroy(probeObject);
+        }
+        else
+        {
+            DestroyImmediate(probeObject);
+        }
+    }
+
+    private float GetRaycastSurfaceDistance(
+        Collider targetCollider,
+        Vector3 origin,
+        Vector3 centerPoint,
+        float maxDistance,
+        float epsilon)
+    {
+        Vector3 toCenter = centerPoint - origin;
+        float distance = toCenter.magnitude;
+        if (distance <= epsilon)
+        {
+            return 0f;
+        }
+
+        Vector3 dir = toCenter / distance;
+        float rayDistance = Mathf.Min(maxDistance, distance + maxDistance * 0.5f);
+        return targetCollider.Raycast(new Ray(origin, dir), out RaycastHit hit, rayDistance)
+            ? hit.distance
+            : maxDistance;
     }
 
     private static Vector3 GetInsidePoint(Collider targetCollider, Bounds bounds, float epsilon)
@@ -2650,8 +2756,45 @@ public class Blob : MonoBehaviour
             Vector3 dir = toTarget / distance;
             if (targetCollider.Raycast(new Ray(bounds.center, dir), out RaycastHit hit, distance * 2f))
             {
-                Vector3 insidePoint = hit.point - hit.normal * epsilon;
-                if (IsPointInsideCollider(targetCollider, insidePoint, epsilon))
+                if (TryNudgeInside(targetCollider, hit, epsilon, out Vector3 insidePoint))
+                {
+                    return insidePoint;
+                }
+            }
+        }
+
+        float maxDistance = bounds.extents.magnitude * 2.5f;
+        Vector3[] dirs =
+        {
+            Vector3.right, Vector3.left, Vector3.up, Vector3.down, Vector3.forward, Vector3.back,
+            (Vector3.right + Vector3.up).normalized,
+            (Vector3.right + Vector3.down).normalized,
+            (Vector3.left + Vector3.up).normalized,
+            (Vector3.left + Vector3.down).normalized,
+            (Vector3.forward + Vector3.up).normalized,
+            (Vector3.forward + Vector3.down).normalized,
+            (Vector3.back + Vector3.up).normalized,
+            (Vector3.back + Vector3.down).normalized
+        };
+
+        Vector3 origin = bounds.center;
+        for (int i = 0; i < dirs.Length; i++)
+        {
+            if (targetCollider.Raycast(new Ray(origin, dirs[i]), out RaycastHit hit, maxDistance))
+            {
+                if (TryNudgeInside(targetCollider, hit, epsilon, out Vector3 insidePoint))
+                {
+                    return insidePoint;
+                }
+            }
+        }
+
+        origin = targetCollider.transform.position;
+        for (int i = 0; i < dirs.Length; i++)
+        {
+            if (targetCollider.Raycast(new Ray(origin, dirs[i]), out RaycastHit hit, maxDistance))
+            {
+                if (TryNudgeInside(targetCollider, hit, epsilon, out Vector3 insidePoint))
                 {
                     return insidePoint;
                 }
@@ -2661,12 +2804,38 @@ public class Blob : MonoBehaviour
         return targetCollider.transform.position;
     }
 
-    private static bool IsPointInsideCollider(Collider targetCollider, Vector3 point, float epsilon)
+    private static bool TryNudgeInside(Collider targetCollider, RaycastHit hit, float epsilon, out Vector3 insidePoint)
     {
-        Vector3 closest = targetCollider.ClosestPoint(point);
-        if ((closest - point).sqrMagnitude <= epsilon * epsilon)
+        insidePoint = hit.point - hit.normal * epsilon;
+        if (IsPointInsideCollider(targetCollider, insidePoint, epsilon))
         {
             return true;
+        }
+
+        insidePoint = hit.point + hit.normal * epsilon;
+        if (IsPointInsideCollider(targetCollider, insidePoint, epsilon))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsPointInsideCollider(Collider targetCollider, Vector3 point, float epsilon)
+    {
+        bool canUseClosestPoint = true;
+        if (targetCollider is MeshCollider meshCollider && !meshCollider.convex)
+        {
+            canUseClosestPoint = false;
+        }
+
+        if (canUseClosestPoint)
+        {
+            Vector3 closest = targetCollider.ClosestPoint(point);
+            if ((closest - point).sqrMagnitude <= epsilon * epsilon)
+            {
+                return true;
+            }
         }
 
         GameObject probeObject = new GameObject("ScanInsideProbe");

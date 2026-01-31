@@ -143,6 +143,7 @@ public class PlayerController : MonoBehaviour
 
         HandleAssimilateCollision(collision.collider);
         GrowInSize(GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume));
+        Destroy(assimilateable.gameObject);
     }
 
     private void GrowInSize(float targetSize)
@@ -235,7 +236,7 @@ public class PlayerController : MonoBehaviour
         // Update the scale of the Collider
         if (collider != null)
         {
-            collider.radius = colliderRadius * Size / 2f;
+            collider.radius = colliderRadius * Size;
         }
 
         // Update Camera Distance
@@ -313,14 +314,14 @@ public class PlayerController : MonoBehaviour
 
             float risingSinkingForce = IsRising && IsSinking ? 0f : IsRising ? RisingSinkingMultiplier : IsSinking ? -RisingSinkingMultiplier : 0f;
 
-            // Berechne die gewünschte Bewegungsrichtung
+            // Berechne die gewï¿½nschte Bewegungsrichtung
             Vector3 desiredDirection = (cameraPivot.transform.forward * movement.y + transform.right * movement.x + Vector3.up * risingSinkingForce * Size);
             
             if (desiredDirection.sqrMagnitude > 0.01f)
             {
                 Vector3 normalizedDirection = desiredDirection.normalized;
                 
-                // Projiziere aktuelle Geschwindigkeit auf die gewünschte Richtung
+                // Projiziere aktuelle Geschwindigkeit auf die gewï¿½nschte Richtung
                 float speedInDirection = Vector3.Dot(rb.linearVelocity, normalizedDirection);
                 
                 // Erlaube Kraft nur wenn Geschwindigkeit in dieser Richtung unter MaxSpeed ist

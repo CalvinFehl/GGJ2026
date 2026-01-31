@@ -34,6 +34,15 @@
                     "initialStateCheck": false
                 },
                 {
+                    "name": "ScanMode",
+                    "type": "Button",
+                    "id": "80d7ee21-4725-4b91-af5c-d87458fbecf7",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
                     "name": "Interact",
                     "type": "Button",
                     "id": "852140f2-7766-474d-8707-702459ba45f3",
@@ -79,18 +88,18 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "Sprint",
+                    "name": "Rise",
                     "type": "Button",
                     "id": "641cd816-40e6-41b4-8c3d-04687c349290",
-                    "expectedControlType": "Button",
+                    "expectedControlType": "",
                     "processors": "",
                     "interactions": "",
                     "initialStateCheck": false
                 },
                 {
-                    "name": "ScanMode",
+                    "name": "Sink",
                     "type": "Button",
-                    "id": "80d7ee21-4725-4b91-af5c-d87458fbecf7",
+                    "id": "683c0303-eb7e-4d8e-a12d-f5787fbc39f5",
                     "expectedControlType": "",
                     "processors": "",
                     "interactions": "",
@@ -358,7 +367,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Keyboard&Mouse",
-                    "action": "Sprint",
+                    "action": "Rise",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -369,7 +378,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "Gamepad",
-                    "action": "Sprint",
+                    "action": "Rise",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -380,7 +389,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "XR",
-                    "action": "Sprint",
+                    "action": "Rise",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -502,6 +511,28 @@
                     "processors": "",
                     "groups": ";Gamepad",
                     "action": "ScanMode",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "e173f46d-1e5f-4100-9115-173fe9e60f51",
+                    "path": "<Keyboard>/ctrl",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Keyboard&Mouse",
+                    "action": "Sink",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "4d407635-ba6d-4a50-9f17-c8cccef3a25a",
+                    "path": "<Gamepad>/rightStickPress",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "Gamepad",
+                    "action": "Sink",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }

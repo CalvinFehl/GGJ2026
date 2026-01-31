@@ -98,7 +98,7 @@ Rigidbody:
   m_GameObject: {fileID: 5953368189911470028}
   serializedVersion: 5
   m_Mass: 1
-  m_LinearDamping: 0.5
+  m_LinearDamping: 0.1
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
   m_InertiaTensor: {x: 1, y: 1, z: 1}
@@ -130,15 +130,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerMovement
   rb: {fileID: 2612244065702375888}
   cameraPivot: {fileID: 2074766288563786960}
+  cameraObject: {fileID: 8832092329181154198}
+  cameraOffset: {x: 0, y: 0.1, z: -1}
   graphicObject: {fileID: 1324037508828411450}
   blob: {fileID: 5119643703992919275}
-  MaxSpeed: 2.5
+  colliderRadius: 0.6
+  growDuration: 2
+  MaxSpeed: 2
   MoveSpeedMultiplyer: 4
   movementDeadzone: 0.06
   LookSensitivityMultiplyer: 20
+  RisingSinkingMultiplier: 4
   BrakeStrength: 5
   CurrentEnergyAmount: 5
-  Size: 1
+  Size: 0.1
   energyConsumptionMultiplyer: 0
   reorientationMultiplyer: 2
 --- !u!1 &6040979607102732047
@@ -318,7 +323,7 @@ Camera:
     y: 0
     width: 1
     height: 1
-  near clip plane: 0.3
+  near clip plane: 0.01
   far clip plane: 1000
   field of view: 60
   orthographic: 0
@@ -359,7 +364,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.UniversalAdditionalCameraData
   m_RenderShadows: 1
-  m_RequiresDepthTextureOption: 2
+  m_RequiresDepthTextureOption: 1
   m_RequiresOpaqueTextureOption: 2
   m_CameraType: 0
   m_Cameras: []

@@ -11,22 +11,31 @@ public class PlayerController : MonoBehaviour
 
     #endregion
 
+    #region Variables
     [Header("Components")]
     [SerializeField] private Rigidbody rb;
     [SerializeField] private Transform cameraPivot;
+    [SerializeField] private Transform cameraObject;
+    [SerializeField] private Vector3 cameraOffset = new Vector3(0f, 0.1f, -1f);
     [SerializeField] private PlayerGraphicObject graphicObject;
     [SerializeField] private Blob blob;
+    [SerializeField] private float colliderRadius = 0.6f;
+    [SerializeField] private float growDuration = 2f;
+    private SphereCollider collider;
 
     [Header("Movement Settings")]
     [SerializeField] private float MaxSpeed = 20f;
     [SerializeField] public float MoveSpeedMultiplyer = 5f;
     [SerializeField] private float movementDeadzone = 0.1f;
     [SerializeField] public float LookSensitivityMultiplyer = 1f;
+    [SerializeField] private float RisingSinkingMultiplier = 1f;
     private float lastSpeed = 0f;
 
     [SerializeField] public float BrakeStrength = 0.1f;
     private bool IsBraking = false;
     private bool IsScanning = false;
+    private bool IsRising = false;
+    private bool IsSinking = false;
 
     [Header("PlayerState Variables")]
     [SerializeField] public float CurrentEnergyAmount = 5f;
@@ -35,13 +44,18 @@ public class PlayerController : MonoBehaviour
 
     [Header("Graphic Object Settings")]
     [SerializeField] private float reorientationMultiplyer = 5f;
+    private bool isReorienting = false;
 
     private InputSystem_Actions inputActions;
     private Vector2 moveInput;
     private Vector2 lookInput;
+    #endregion
 
+    #region Monobehaviour Methods
     private void Awake()
     {
+        collider = GetComponent<SphereCollider>();
+
         if (rb == null)
         {
             rb = GetComponent<Rigidbody>();
@@ -62,7 +76,17 @@ public class PlayerController : MonoBehaviour
             rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         }
 
+        if (cameraObject == null && cameraPivot != null)
+        {
+            cameraObject = cameraPivot.GetChild(0);
+        }
+
         inputActions = new InputSystem_Actions();
+    }
+
+    private void Start()
+    {
+        UpdateComponentSizes(Size);
     }
 
     private void OnEnable()
@@ -73,6 +97,10 @@ public class PlayerController : MonoBehaviour
         inputActions.Player.Crouch.canceled += ctx => IsBraking = false;
         inputActions.Player.ScanMode.performed += ctx => IsScanning = true;
         inputActions.Player.ScanMode.canceled += ctx => IsScanning = false;
+        inputActions.Player.Rise.performed += ctx => IsRising = true;
+        inputActions.Player.Rise.canceled += ctx => IsRising = false;
+        inputActions.Player.Sink.performed += ctx => IsSinking = true;
+        inputActions.Player.Sink.canceled += ctx => IsSinking = false;
 
         inputActions.Player.Interact.performed += ctx => Interact();
 
@@ -94,12 +122,70 @@ public class PlayerController : MonoBehaviour
         }
 
     }
+    private void FixedUpdate()
+    {
+        HandleMovementInput();
+        HandleCameraInput();
+    }
+    #endregion
+
+    #region Assimilation Methods
 
     private void OnCollisionEnter(Collision collision)
     {
         if (collision.collider.CompareTag("Assimilateable"))
         {
-            HandleAssimilateCollision(collision.collider);
+           // HandleAssimilateCollision(collision.collider);
+            GrowInSize(Size + 0.2f);
+        }
+    }
+
+    private void GrowInSize(float targetSize)
+    {
+        StartCoroutine(GrowInSizeCoroutine(targetSize, growDuration));
+    }
+
+    private System.Collections.IEnumerator GrowInSizeCoroutine(float targetSize, float duration)
+    {
+        float startSize = Size;
+        float elapsedTime = 0f;
+
+        while (elapsedTime < duration)
+        {
+            elapsedTime += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsedTime / duration);
+            
+            // Smooth interpolation
+            Size = Mathf.Lerp(startSize, targetSize, t);
+            
+            UpdateComponentSizes(Size);
+
+            yield return null;
+        }
+        
+        // Ensure we reach exact target size
+        Size = targetSize;
+        UpdateComponentSizes(Size);
+    }
+
+    private void UpdateComponentSizes(float newSize)
+    {
+        // Update the scale of the Blob
+        if (blob != null)
+        {
+            blob.transform.localScale = Vector3.one * Size;
+        }
+
+        // Update the scale of the Collider
+        if (collider != null)
+        {
+            collider.radius = colliderRadius * Size;
+        }
+
+        // Update Camera Distance
+        if(cameraObject != null)
+        {
+            cameraObject.localPosition = cameraOffset * Size;
         }
     }
 
@@ -139,6 +225,9 @@ public class PlayerController : MonoBehaviour
 
         return hitCollider.gameObject;
     }
+    #endregion
+
+    #region Movement Methods
 
     private void HandleMovementInput()
     {
@@ -171,9 +260,11 @@ public class PlayerController : MonoBehaviour
                 isMoving = true;
             }
 
+            float risingSinkingForce = IsRising && IsSinking ? 0f : IsRising ? RisingSinkingMultiplier : IsSinking ? -RisingSinkingMultiplier : 0f;
+
             if (speed < MaxSpeed * Size)
             {
-                rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
+                rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x + new Vector3(0f, risingSinkingForce, 0f) * Size, ForceMode.Force);
             }
         }
 
@@ -181,13 +272,20 @@ public class PlayerController : MonoBehaviour
         {
             if (cameraPivot == null || !isMoving) return;
             
-            if (speed > lastSpeed)
+            if (speed > lastSpeed && !isReorienting)
             {
-                graphicObject.Reorient(cameraPivot.forward, Time.deltaTime, speed * reorientationMultiplyer);
+                StartCoroutine(ReorientAndToggleFlag(speed / Size * reorientationMultiplyer));
             }
         }
 
         lastSpeed = speed;
+    }
+
+    private System.Collections.IEnumerator ReorientAndToggleFlag(float reorientationSpeed)
+    {
+        isReorienting = true;
+        yield return StartCoroutine(graphicObject.ReorientCoroutine(reorientationSpeed));
+        isReorienting = false;
     }
 
     private void HandleCameraInput()
@@ -229,19 +327,15 @@ public class PlayerController : MonoBehaviour
         cameraPivot.localEulerAngles = new Vector3(newXRotation, 0f, 0f);
     }
 
-    private void FixedUpdate()
-    {
-        HandleMovementInput();
-        HandleCameraInput();
-    }
-
     private void Brake()
     {
         if (rb == null) return;
         rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, Vector3.zero, BrakeStrength * Time.deltaTime);
         rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, BrakeStrength * Time.deltaTime);
     }
+    #endregion
 
+    #region Interaction Methods
     private void Interact()
     {
         if(Physics.SphereCast(transform.position, Size, transform.forward, out RaycastHit hitInfo, 2f))
@@ -285,4 +379,5 @@ public class PlayerController : MonoBehaviour
         Debug.Log($"Picked up item: {item.name}");
         // Beispiel: Item ins Inventar aufnehmen
     }
+    #endregion
 }

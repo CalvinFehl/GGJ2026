@@ -571,7 +571,7 @@ public class Blob : MonoBehaviour
                 for (int z = 0; z < size.z; z++)
                 {
                     voxels[x, y, z] = value;
-                    colors[x, y, z] = new Color(Random.value, Random.value, Random.value, 1f);
+                    colors[x, y, z] = fillColor;
                 }
             }
         }
@@ -599,7 +599,7 @@ public class Blob : MonoBehaviour
                         float dist = delta.magnitude;
                         float density = Mathf.Clamp01(1f - (dist / safeRadius));
                         voxels[x, y, z] = density * value;
-                        colors[x, y, z] = new Color(Random.value, Random.value, Random.value, 1f);
+                        colors[x, y, z] = fillColor;
                     }
                     else
                     {
@@ -1125,7 +1125,7 @@ public class Blob : MonoBehaviour
 
         for (int y = 0; y < size.y; y++)
         {
-            Color layerColor = new Color(Random.value, Random.value, Random.value, 1f);
+            Color layerColor = fillColor;
             Vector2 halfExtents = GetScanlineHalfExtents();
             Vector2 center = new Vector2((size.x - 1) * 0.5f, (size.z - 1) * 0.5f);
             scanlineCurrentLayer = y;

@@ -201,7 +201,8 @@ MonoBehaviour:
   generateOnStart: 1
   fillSolidOnStart: 1
   regenerateOnValidate: 1
-  fillColor: {r: 1, g: 1, b: 1, a: 1}
+  fillColor: {r: 0, g: 1, b: 0.18392253, a: 1}
+  useGradientNormals: 0
   scanlineLayersPerSecond: 1
   scanlineShape: 1
   scanlineShapeScaleX: 1

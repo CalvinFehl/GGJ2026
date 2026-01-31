@@ -131,15 +131,16 @@ MonoBehaviour:
   rb: {fileID: 2612244065702375888}
   cameraPivot: {fileID: 2074766288563786960}
   graphicObject: {fileID: 1324037508828411450}
-  MaxSpeed: 3
-  MoveSpeedMultiplyer: 5
+  blob: {fileID: 5119643703992919275}
+  MaxSpeed: 2.5
+  MoveSpeedMultiplyer: 4
   movementDeadzone: 0.06
   LookSensitivityMultiplyer: 20
   BrakeStrength: 5
   CurrentEnergyAmount: 5
   Size: 1
   energyConsumptionMultiplyer: 0
-  reorientationMultiplyer: 5
+  reorientationMultiplyer: 2
 --- !u!1 &6040979607102732047
 GameObject:
   m_ObjectHideFlags: 0
@@ -485,6 +486,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 36c950e12875c124da4c5283fa471aa1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerGraphicObject
+--- !u!114 &5119643703992919275 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 6430211365361308384, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}
+  m_PrefabInstance: {fileID: 2175260584048227851}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3373433361861199019}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 56352292db5ef41f3b9b00e9b9bd42ad, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Blob
 --- !u!4 &6720025233852068392 stripped
 Transform:
   m_CorrespondingSourceObject: {fileID: 4860018010124157987, guid: 63b641eb5e5f146d0898a92a28170a5a, type: 3}

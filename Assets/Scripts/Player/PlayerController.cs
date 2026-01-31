@@ -151,25 +151,26 @@ public class PlayerController : MonoBehaviour
             Angular = rb.angularVelocity 
         };
 
-
         bool isMoving = false;
+        float speed = rigidbodyVelocity.Linear.magnitude;
+
         if (CurrentEnergyAmount > 0f)
         {
             Vector2 movement = new Vector3(moveInput.x, moveInput.y) * MoveSpeedMultiplyer;
             CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * dt;
 
-            if(rigidbodyVelocity.Linear.magnitude < movementDeadzone)
+            if (speed < movementDeadzone)
             {
                 rigidbodyVelocity.Linear = Vector3.zero;
                 rb.linearVelocity = Vector3.zero;
             }
 
-            if (rigidbodyVelocity.Linear.magnitude != 0f)
+            if (speed != 0f)
             {
                 isMoving = true;
             }
 
-            if (rigidbodyVelocity.Linear.magnitude < MaxSpeed * Size)
+            if (speed < MaxSpeed * Size)
             {
                 rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
             }
@@ -180,7 +181,7 @@ public class PlayerController : MonoBehaviour
             if (cameraPivot == null || !isMoving) return;
             
             Debug.Log("Reorient Graphic Object");
-            graphicObject.Reorient(cameraPivot.up, Time.deltaTime);
+            graphicObject.Reorient(cameraPivot.forward, Time.deltaTime, speed * reorientationMultiplyer);
         }
     }
 

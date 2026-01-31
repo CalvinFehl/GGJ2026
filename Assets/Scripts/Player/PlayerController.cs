@@ -14,6 +14,7 @@ public class PlayerController : MonoBehaviour
     [Header("Components")]
     [SerializeField] private Rigidbody rb;
     [SerializeField] private Transform cameraPivot;
+    [SerializeField] private PlayerGraphicObject graphicObject;
 
     [Header("Movement Settings")]
     [SerializeField] public float MoveSpeedMultiplyer = 5f;
@@ -26,6 +27,9 @@ public class PlayerController : MonoBehaviour
     [SerializeField] public float CurrentEnergyAmount = 5f;
     [SerializeField] public float Size = 1f;
     [SerializeField] private float energyConsumptionMultiplyer = 1f;
+
+    [Header("Graphic Object Settings")]
+    [SerializeField] private float reorientationMultiplyer = 5f;
 
     private InputSystem_Actions inputActions;
 
@@ -71,13 +75,21 @@ public class PlayerController : MonoBehaviour
         if (rb == null) return;
 
         Vector2 moveInput = inputActions.Player.Move.ReadValue<Vector2>();
-        
+
+        bool isMoving = false;
         if (CurrentEnergyAmount > 0f)
         {
             Vector2 movement = new Vector3(moveInput.x, moveInput.y) * MoveSpeedMultiplyer;
             CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * Time.deltaTime;
 
             rb.AddForce(cameraPivot.transform.forward * movement.y + transform.right * movement.x, ForceMode.Force);
+            isMoving = movement.magnitude != 0f;
+        }
+
+        if (graphicObject != null)
+        {
+            if (cameraPivot == null || !isMoving) return;
+            //graphicObject.Reorient(cameraPivot.rotation, Time.deltaTime, rb.linearVelocity.magnitude * reorientationMultiplyer);
         }
     }
 
@@ -86,6 +98,8 @@ public class PlayerController : MonoBehaviour
         Vector2 cameraInput = inputActions.Player.Look.ReadValue<Vector2>();
 
         if (cameraPivot == null) return;
+
+        Quaternion originalRotation = cameraPivot.localRotation;
 
         // Horizontale Rotation (Spieler dreht sich um Y-Achse)
         transform.Rotate(Vector3.up, cameraInput.x * LookSensitivityMultiplyer * Time.deltaTime);
@@ -104,6 +118,11 @@ public class PlayerController : MonoBehaviour
 
         // Wende die neue Rotation an
         cameraPivot.localEulerAngles = new Vector3(newXRotation, 0f, 0f);
+
+        if(graphicObject != null)
+        {
+            graphicObject.Rotate(originalRotation);
+        }
     }
 
     private void Brake()

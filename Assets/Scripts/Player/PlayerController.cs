@@ -8,11 +8,15 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Transform cameraPivot;
     [SerializeField] private Transform cameraObject;
     [SerializeField] private Vector3 cameraOffset = new Vector3(0f, 0.1f, -1f);
+    [SerializeField] private float cameraCollisionRadius = 0.04f;
+    [SerializeField] private float cameraCollisionBuffer = 0.01f;
+    [SerializeField] private LayerMask cameraCollisionMask = ~0;
     [SerializeField] private PlayerGraphicObject graphicObject;
     [SerializeField] private Blob blob;
     [SerializeField] private float colliderRadius = 0.6f;
     [SerializeField] private float growDuration = 2f;
     private SphereCollider collider;
+    private Vector3 desiredCameraLocalPosition;
 
     [Header("Movement Settings")]
     [SerializeField] private float MaxSpeed = 20f;
@@ -112,6 +116,10 @@ public class PlayerController : MonoBehaviour
             Brake();
         }
 
+    }
+    private void LateUpdate()
+    {
+        UpdateCameraObstruction();
     }
     private void FixedUpdate()
     {
@@ -242,8 +250,81 @@ public class PlayerController : MonoBehaviour
         // Update Camera Distance
         if(cameraObject != null)
         {
-            cameraObject.localPosition = cameraOffset * Size;
+            desiredCameraLocalPosition = cameraOffset * Size;
+            cameraObject.localPosition = desiredCameraLocalPosition;
         }
+    }
+
+    private void UpdateCameraObstruction()
+    {
+        if (cameraPivot == null || cameraObject == null)
+        {
+            return;
+        }
+
+        Vector3 pivotPosition = cameraPivot.position;
+        Vector3 desiredWorldPosition = cameraPivot.TransformPoint(desiredCameraLocalPosition);
+        Vector3 toDesired = desiredWorldPosition - pivotPosition;
+        float distance = toDesired.magnitude;
+        if (distance <= 0.001f)
+        {
+            cameraObject.position = desiredWorldPosition;
+            return;
+        }
+
+        Vector3 direction = toDesired / distance;
+        float minDistanceFromPlayer = 0f;
+        if (collider != null)
+        {
+            minDistanceFromPlayer = collider.radius * GetMaxAbsScale(transform.lossyScale);
+        }
+
+        float clampedDesiredDistance = Mathf.Max(distance, minDistanceFromPlayer);
+        float castDistance = Mathf.Max(0f, clampedDesiredDistance);
+        Vector3 castOrigin = pivotPosition;
+
+        RaycastHit[] hits = Physics.RaycastAll(
+            castOrigin,
+            direction,
+            castDistance,
+            cameraCollisionMask,
+            QueryTriggerInteraction.Ignore
+        );
+
+        RaycastHit closestHit = default;
+        bool foundHit = false;
+        float closestDistance = float.PositiveInfinity;
+
+        for (int i = 0; i < hits.Length; i++)
+        {
+            Collider hitCollider = hits[i].collider;
+            if (hitCollider == null)
+            {
+                continue;
+            }
+
+            // Ignore player colliders (self or children).
+            if (hitCollider.transform.IsChildOf(transform))
+            {
+                continue;
+            }
+
+            if (hits[i].distance < closestDistance)
+            {
+                closestDistance = hits[i].distance;
+                closestHit = hits[i];
+                foundHit = true;
+            }
+        }
+
+        if (foundHit)
+        {
+            float safeDistance = Mathf.Max(minDistanceFromPlayer, closestHit.distance - cameraCollisionBuffer);
+            cameraObject.position = pivotPosition + direction * safeDistance;
+            return;
+        }
+
+        cameraObject.position = pivotPosition + direction * clampedDesiredDistance;
     }
 
     private void HandleAssimilateCollision(Collider hitCollider)

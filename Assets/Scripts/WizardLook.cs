@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class WizardLook : MonoBehaviour
 {
@@ -20,7 +21,7 @@ public class WizardLook : MonoBehaviour
     [SerializeField] private bool invertFocusDirection = true;
 
     [Header("Alert")]
-    [SerializeField] private float playerSpeedThreshold = 0.5f;
+    private float playerSpeedThreshold = 0.01f;
     [SerializeField] private float alertBlinkDuration = 2.0f;
     [SerializeField] private float alertBlinkInterval = 0.2f;
     [SerializeField] private Color alertColor = Color.red;
@@ -57,9 +58,9 @@ public class WizardLook : MonoBehaviour
     private float focusTurnTimer;
     private float focusHoldTimer;
     private bool isFocusing;
-    private bool focusTurnComplete;
-    private bool alertTriggered;
     private Coroutine alertRoutine;
+    private bool isBlinking;
+    private bool alertTriggered;
     private Renderer[] hatRenderers;
     private Color[] hatRendererBaseColors;
     private Color hatLightBaseColor = Color.white;
@@ -118,7 +119,7 @@ public class WizardLook : MonoBehaviour
     private void OnDisable()
     {
         PlayerController.PlayerTransformed -= HandlePlayerTransformed;
-        StopAlertRoutine();
+        StopAlertRoutine(false);
     }
 
     private void Update()
@@ -139,14 +140,11 @@ public class WizardLook : MonoBehaviour
         {
             focusTurnTimer += Time.deltaTime;
             Vector2 targetAngles = GetAnglesToTarget(focusTarget);
-            if (focusTurnDuration <= 0f || focusTurnTimer >= focusTurnDuration)
+            bool turnComplete = focusTurnDuration <= 0f || focusTurnTimer >= focusTurnDuration;
+            if (turnComplete)
             {
                 desiredAngles = targetAngles;
-                if (!focusTurnComplete)
-                {
-                    focusTurnComplete = true;
-                    TryTriggerAlert();
-                }
+                UpdateHoldAlertState();
                 focusHoldTimer += Time.deltaTime;
                 if (focusHoldTimer >= focusHoldDuration)
                 {
@@ -157,6 +155,7 @@ public class WizardLook : MonoBehaviour
             {
                 float t = Mathf.Clamp01(focusTurnTimer / focusTurnDuration);
                 desiredAngles = Vector2.Lerp(focusStartAngles, targetAngles, t);
+                UpdateTurnAlertState();
             }
         }
 
@@ -215,7 +214,6 @@ public class WizardLook : MonoBehaviour
         }
 
         alertTriggered = false;
-        focusTurnComplete = false;
         focusTarget = playerTransform;
         isFocusing = true;
         focusTurnTimer = 0f;
@@ -227,7 +225,12 @@ public class WizardLook : MonoBehaviour
     {
         isFocusing = false;
         focusTarget = null;
-        focusTurnComplete = false;
+        if (alertTriggered)
+        {
+            return;
+        }
+
+        StopAlertRoutine(false);
         PickNewTarget();
     }
 
@@ -299,24 +302,6 @@ public class WizardLook : MonoBehaviour
         }
     }
 
-    private void TryTriggerAlert()
-    {
-        if (alertTriggered || focusTarget == null)
-        {
-            return;
-        }
-
-        float speed = GetTargetSpeed(focusTarget);
-        if (speed <= playerSpeedThreshold)
-        {
-            return;
-        }
-
-        alertTriggered = true;
-        StopAlertRoutine();
-        alertRoutine = StartCoroutine(AlertAndEndRoutine());
-    }
-
     private float GetTargetSpeed(Transform target)
     {
         Rigidbody targetRb = target.GetComponentInParent<Rigidbody>();
@@ -328,8 +313,40 @@ public class WizardLook : MonoBehaviour
         return targetRb != null ? targetRb.linearVelocity.magnitude : 0f;
     }
 
+    private bool IsTargetMovingTooFast()
+    {
+        return focusTarget != null && GetTargetSpeed(focusTarget) > playerSpeedThreshold;
+    }
+
+    private void UpdateTurnAlertState()
+    {
+        StopAlertRoutine(true);
+        ApplyHatAlertState(true);
+    }
+
+    private void UpdateHoldAlertState()
+    {
+        if (alertTriggered)
+        {
+            return;
+        }
+
+        if (IsTargetMovingTooFast())
+        {
+            alertTriggered = true;
+            StopAlertRoutine(true);
+            alertRoutine = StartCoroutine(AlertAndEndRoutine());
+        }
+        else
+        {
+            StopAlertRoutine(true);
+            ApplyHatAlertState(true);
+        }
+    }
+
     private IEnumerator AlertAndEndRoutine()
     {
+        isBlinking = true;
         float elapsed = 0f;
         bool blinkOn = false;
         while (elapsed < alertBlinkDuration)
@@ -341,8 +358,9 @@ public class WizardLook : MonoBehaviour
             elapsed += wait;
         }
 
-        ApplyHatAlertState(false);
-        LoadEndSceneStub();
+        isBlinking = false;
+        ApplyHatAlertState(true);
+        LoadEndScene();
         alertRoutine = null;
     }
 
@@ -376,18 +394,23 @@ public class WizardLook : MonoBehaviour
         }
     }
 
-    private void StopAlertRoutine()
+    private void StopAlertRoutine(bool keepRed)
     {
         if (alertRoutine != null)
         {
             StopCoroutine(alertRoutine);
             alertRoutine = null;
         }
-        ApplyHatAlertState(false);
+        isBlinking = false;
+        if (!keepRed)
+        {
+            ApplyHatAlertState(false);
+        }
     }
 
-    private void LoadEndSceneStub()
+    private void LoadEndScene()
     {
+        SceneManager.LoadScene("LooseScreen");
     }
 
 }

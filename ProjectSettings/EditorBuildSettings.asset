@@ -8,6 +8,15 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/MovementTest.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/WinScreen.unity
+    guid: c3f5451148fd42a4c9ce76294487f1f0
+  - enabled: 1
+    path: Assets/Scenes/LooseScreen.unity
+    guid: ddcb5a12a0b13614e90a1ffd220b751e
+  - enabled: 1
+    path: Assets/Scenes/Startscreen.unity
+    guid: 19298ddd24286c6439d92c3ca5594aa8
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0

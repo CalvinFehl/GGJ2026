@@ -405,11 +405,12 @@ MonoBehaviour:
   focusTurnDuration: 2
   focusHoldDuration: 2
   invertFocusDirection: 1
-  playerSpeedThreshold: 0.5
   alertBlinkDuration: 2
   alertBlinkInterval: 0.2
   alertColor: {r: 1, g: 0, b: 0, a: 1}
   hatLight: {fileID: 0}
+  audioSource: {fileID: 426960525}
+  alertSound: {fileID: 8300000, guid: 72ea3c12d0da0a542b23d33388c7748a, type: 3}
   maxPitch: 70
   bodyFollowSpeed: 1.6
   bodyFollowThreshold: 40
@@ -427,7 +428,7 @@ AudioSource:
   m_audioClip: {fileID: 0}
   m_Resource: {fileID: 8300000, guid: 033bf0d3bae3538429148b94a24148b1, type: 3}
   m_PlayOnAwake: 0
-  m_Volume: 1
+  m_Volume: 0.3
   m_Pitch: 1
   Loop: 0
   Mute: 0

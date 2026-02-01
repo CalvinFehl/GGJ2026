@@ -26,6 +26,10 @@ public class WizardLook : MonoBehaviour
     [SerializeField] private float alertBlinkInterval = 0.2f;
     [SerializeField] private Color alertColor = Color.red;
     [SerializeField] private Light hatLight;
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip alertSound;
+
+
 
     [Header("Pitch Limits")]
     [SerializeField, Range(0f, 89f)] private float maxPitch = 70f;
@@ -102,6 +106,13 @@ public class WizardLook : MonoBehaviour
             bodyBaseRotation = body.rotation;
             bodyRestRelative = Quaternion.Inverse(referenceBaseRotation) * bodyBaseRotation;
         }
+        
+        // Initialize AudioSource if not assigned
+        if (audioSource == null)
+        {
+            audioSource = GetComponent<AudioSource>();
+        }
+        
         CacheHatRenderers();
         CacheHatOffsets();
         CacheHeadOffset();
@@ -334,6 +345,13 @@ public class WizardLook : MonoBehaviour
         if (IsTargetMovingTooFast())
         {
             alertTriggered = true;
+            
+            // Play alert sound once
+            if (audioSource != null && alertSound != null)
+            {
+                audioSource.PlayOneShot(alertSound);
+            }
+            
             StopAlertRoutine(true);
             alertRoutine = StartCoroutine(AlertAndEndRoutine());
         }

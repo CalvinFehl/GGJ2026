@@ -47,9 +47,18 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float reorientationMultiplyer = 5f;
     private bool isReorienting = false;
 
+    [Header("Audio Settings")]
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip engineStartSound;
+    [SerializeField] private AudioClip assimilateSound;
+    [SerializeField] private AudioClip growSound;
+    [SerializeField] private AudioClip morphSound;
+
     private InputSystem_Actions inputActions;
     private Vector2 moveInput;
     private Vector2 lookInput;
+
+
     #endregion
 
     #region Monobehaviour Methods
@@ -161,6 +170,7 @@ public class PlayerController : MonoBehaviour
         {
             GrowInSize(GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume));
             Destroy(assimilateable.gameObject);
+            PlaySoundOneShot(assimilateSound);
             PlayerTransformed?.Invoke(transform);
         }
     }
@@ -168,6 +178,7 @@ public class PlayerController : MonoBehaviour
     private void GrowInSize(float targetSize)
     {
         StartCoroutine(GrowInSizeCoroutine(targetSize, growDuration));
+        PlaySoundOneShot(growSound);
     }
 
     private float GetBlobVolume()
@@ -453,10 +464,15 @@ public class PlayerController : MonoBehaviour
         Vector3 currentLinearVelocity = rb.linearVelocity;
         float speed = currentLinearVelocity.magnitude;
 
+
         if (speed < movementDeadzone)
         {
             currentLinearVelocity = Vector3.zero;
             rb.linearVelocity = Vector3.zero;
+        }
+        else if (lastLinearVelocity == Vector3.zero)
+        {
+            PlaySoundOneShot(engineStartSound);
         }
 
         // Add movement force
@@ -467,16 +483,16 @@ public class PlayerController : MonoBehaviour
 
             float risingSinkingForce = IsRising && IsSinking ? 0f : IsRising ? RisingSinkingMultiplier : IsSinking ? -RisingSinkingMultiplier : 0f;
 
-            // Berechne die gew�nschte Bewegungsrichtung
+            // Berechne die gew�nsste Bewegungsrichtung
             Vector3 desiredDirection = (cameraPivot.transform.forward * movement.y + transform.right * movement.x + Vector3.up * risingSinkingForce);
-            
+
             if (desiredDirection.sqrMagnitude > 0.01f)
             {
                 Vector3 normalizedDirection = desiredDirection.normalized;
-                
-                // Projiziere aktuelle Geschwindigkeit auf die gew�nschte Richtung
+
+                // Projiziere aktuelle Geschwindigkeit auf die gewollte Richtung
                 float speedInDirection = Vector3.Dot(rb.linearVelocity, normalizedDirection);
-                
+
                 // Erlaube Kraft nur wenn Geschwindigkeit in dieser Richtung unter MaxSpeed ist
                 if (speedInDirection < MaxSpeed * Size)
                 {
@@ -539,6 +555,37 @@ public class PlayerController : MonoBehaviour
         if (rb == null) return;
         rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, Vector3.zero, BrakeStrength * Time.deltaTime);
         rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, BrakeStrength * Time.deltaTime);
+    }
+
+    private void PlaySound(AudioClip clip)
+    {
+        if (audioSource == null || clip == null)
+        {
+            return;
+        }
+
+        // Spiele Sound nur ab wenn gerade kein anderer läuft oder ersetze den aktuellen
+        if (!audioSource.isPlaying)
+        {
+            audioSource.clip = clip;
+            audioSource.Play();
+        }
+        else if (audioSource.clip != clip)
+        {
+            // Stoppe aktuellen Sound und spiele neuen ab
+            audioSource.Stop();
+            audioSource.clip = clip;
+            audioSource.Play();
+        }
+    }
+
+    // Optional: Eine einfachere Variante die den Sound immer abspielt
+    private void PlaySoundOneShot(AudioClip clip)
+    {
+        if (audioSource != null && clip != null)
+        {
+            audioSource.PlayOneShot(clip);
+        }
     }
     #endregion
 }

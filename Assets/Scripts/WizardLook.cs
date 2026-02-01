@@ -13,6 +13,10 @@ public class WizardLook : MonoBehaviour
     [SerializeField] private float maxHoldTime = 4.0f;
     [SerializeField] private float headTurnSpeed = 2.5f;
 
+    [Header("Player Focus")]
+    [SerializeField] private float focusTurnDuration = 2.0f;
+    [SerializeField] private float focusHoldDuration = 2.0f;
+
     [Header("Pitch Limits")]
     [SerializeField, Range(0f, 89f)] private float maxPitch = 70f;
 
@@ -38,6 +42,12 @@ public class WizardLook : MonoBehaviour
 
     private Vector3 hatLocalOffset;
     private Quaternion hatRotationOffset = Quaternion.identity;
+
+    private Transform focusTarget;
+    private Vector2 focusStartAngles;
+    private float focusTurnTimer;
+    private float focusHoldTimer;
+    private bool isFocusing;
 
     private void Reset()
     {
@@ -81,10 +91,16 @@ public class WizardLook : MonoBehaviour
 
     private void OnEnable()
     {
+        PlayerController.PlayerTransformed += HandlePlayerTransformed;
         PickNewTarget();
         headYaw = 0f;
         headPitch = 0f;
         bodyYawOffset = 0f;
+    }
+
+    private void OnDisable()
+    {
+        PlayerController.PlayerTransformed -= HandlePlayerTransformed;
     }
 
     private void Update()
@@ -95,13 +111,34 @@ public class WizardLook : MonoBehaviour
         }
 
         holdTimer -= Time.deltaTime;
-        if (holdTimer <= 0f)
+        if (!isFocusing && holdTimer <= 0f)
         {
             PickNewTarget();
         }
 
-        headYaw = Mathf.LerpAngle(headYaw, targetHeadAngles.x, headTurnSpeed * Time.deltaTime);
-        headPitch = Mathf.LerpAngle(headPitch, targetHeadAngles.y, headTurnSpeed * Time.deltaTime);
+        Vector2 desiredAngles = targetHeadAngles;
+        if (isFocusing && focusTarget != null)
+        {
+            focusTurnTimer += Time.deltaTime;
+            Vector2 targetAngles = GetAnglesToTarget(focusTarget);
+            if (focusTurnDuration <= 0f || focusTurnTimer >= focusTurnDuration)
+            {
+                desiredAngles = targetAngles;
+                focusHoldTimer += Time.deltaTime;
+                if (focusHoldTimer >= focusHoldDuration)
+                {
+                    EndFocus();
+                }
+            }
+            else
+            {
+                float t = Mathf.Clamp01(focusTurnTimer / focusTurnDuration);
+                desiredAngles = Vector2.Lerp(focusStartAngles, targetAngles, t);
+            }
+        }
+
+        headYaw = Mathf.LerpAngle(headYaw, desiredAngles.x, headTurnSpeed * Time.deltaTime);
+        headPitch = Mathf.LerpAngle(headPitch, desiredAngles.y, headTurnSpeed * Time.deltaTime);
         headPitch = Mathf.Clamp(headPitch, -maxPitch, maxPitch);
 
         Quaternion yawRot = Quaternion.AngleAxis(headYaw, Vector3.up);
@@ -145,6 +182,42 @@ public class WizardLook : MonoBehaviour
 
         float yaw = Mathf.Atan2(dirRef.x, dirRef.z) * Mathf.Rad2Deg;
         targetHeadAngles = new Vector2(yaw, pitch);
+    }
+
+    private void HandlePlayerTransformed(Transform playerTransform)
+    {
+        if (playerTransform == null)
+        {
+            return;
+        }
+
+        focusTarget = playerTransform;
+        isFocusing = true;
+        focusTurnTimer = 0f;
+        focusHoldTimer = 0f;
+        focusStartAngles = new Vector2(headYaw, headPitch);
+    }
+
+    private void EndFocus()
+    {
+        isFocusing = false;
+        focusTarget = null;
+        PickNewTarget();
+    }
+
+    private Vector2 GetAnglesToTarget(Transform target)
+    {
+        Vector3 toTarget = target.position - head.position;
+        if (toTarget.sqrMagnitude < 0.0001f)
+        {
+            return new Vector2(headYaw, headPitch);
+        }
+
+        Vector3 dirRef = Quaternion.Inverse(referenceBaseRotation) * toTarget.normalized;
+        float pitch = Mathf.Asin(Mathf.Clamp(dirRef.y, -1f, 1f)) * Mathf.Rad2Deg;
+        pitch = Mathf.Clamp(pitch, -maxPitch, maxPitch);
+        float yaw = Mathf.Atan2(dirRef.x, dirRef.z) * Mathf.Rad2Deg;
+        return new Vector2(yaw, pitch);
     }
 
     private void CacheHatOffsets()

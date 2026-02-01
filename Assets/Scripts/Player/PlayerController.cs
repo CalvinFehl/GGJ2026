@@ -2,6 +2,7 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
+    public static event System.Action<Transform> PlayerTransformed;
     #region Variables
     [Header("Components")]
     [SerializeField] private Rigidbody rb;
@@ -14,7 +15,11 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private PlayerGraphicObject graphicObject;
     [SerializeField] private Blob blob;
     [SerializeField] private float colliderRadius = 0.6f;
+    [SerializeField] private bool matchColliderToMesh = true;
+    [SerializeField] private float colliderRadiusMultiplier = 1f;
+    [SerializeField] private float minColliderRadius = 0.05f;
     [SerializeField] private float growDuration = 2f;
+    [SerializeField, Range(0f, 1f)] private float assimilateSimilarityThreshold = 0.6f;
     private SphereCollider collider;
     private Vector3 desiredCameraLocalPosition;
 
@@ -36,6 +41,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] public float CurrentEnergyAmount = 5f;
     [SerializeField] public float Size = 1f;
     [SerializeField] private float energyConsumptionMultiplyer = 1f;
+    [SerializeField] private float growthDamping = 0.2f;
 
     [Header("Graphic Object Settings")]
     [SerializeField] private float reorientationMultiplyer = 5f;
@@ -120,6 +126,10 @@ public class PlayerController : MonoBehaviour
     private void LateUpdate()
     {
         UpdateCameraObstruction();
+        if (matchColliderToMesh)
+        {
+            UpdateColliderRadiusFromMesh();
+        }
     }
     private void FixedUpdate()
     {
@@ -149,9 +159,12 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        HandleAssimilateCollision(collision.collider);
-        GrowInSize(GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume));
-        Destroy(assimilateable.gameObject);
+        if (HandleAssimilateCollision(collision.collider))
+        {
+            GrowInSize(GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume));
+            Destroy(assimilateable.gameObject);
+            PlayerTransformed?.Invoke(transform);
+        }
     }
 
     private void GrowInSize(float targetSize)
@@ -162,13 +175,10 @@ public class PlayerController : MonoBehaviour
     private float GetBlobVolume()
     {
         float scale = GetMaxAbsScale(transform.lossyScale);
-        if (collider != null)
+        float radius = colliderRadius * Size * scale;
+        if (radius > 0f)
         {
-            float radius = colliderRadius * Size * scale;
-            if (radius > 0f)
-            {
-                return (4f / 3f) * Mathf.PI * radius * radius * radius;
-            }
+            return (4f / 3f) * Mathf.PI * radius * radius * radius * 1.0f;
         }
 
         if (blob != null)
@@ -196,13 +206,25 @@ public class PlayerController : MonoBehaviour
         float baseRadius = colliderRadius * scale;
         if (baseRadius <= 0f || blobVolume <= 0f)
         {
-            return Size + assimilateableVolume;
+            float dampedVolume = GetDampedAssimilationVolume(assimilateableVolume);
+            return Size + dampedVolume;
         }
 
         float baseVolume = (4f / 3f) * Mathf.PI * baseRadius * baseRadius * baseRadius;
-        float targetVolume = blobVolume + assimilateableVolume;
+        float targetVolume = blobVolume + GetDampedAssimilationVolume(assimilateableVolume * 0.5f);
         float targetSize = Mathf.Pow(targetVolume / baseVolume, 1f / 3f);
         return Mathf.Max(Size, targetSize);
+    }
+
+    private float GetDampedAssimilationVolume(float assimilateableVolume)
+    {
+        if (assimilateableVolume <= 0f)
+        {
+            return 0f;
+        }
+
+        float damping = 1f / (1f + Mathf.Max(0f, growthDamping) * Size);
+        return assimilateableVolume * damping;
     }
 
     private float GetMaxAbsScale(Vector3 scale)
@@ -244,7 +266,13 @@ public class PlayerController : MonoBehaviour
         // Update the scale of the Collider
         if (collider != null)
         {
-            collider.radius = colliderRadius * Size;
+            float targetRadius = colliderRadius * Size;
+            if (matchColliderToMesh)
+            {
+                targetRadius = GetTargetRadiusFromMesh(targetRadius);
+            }
+
+            collider.radius = Mathf.Max(minColliderRadius, targetRadius);
         }
 
         // Update Camera Distance
@@ -253,6 +281,52 @@ public class PlayerController : MonoBehaviour
             desiredCameraLocalPosition = cameraOffset * Size;
             cameraObject.localPosition = desiredCameraLocalPosition;
         }
+    }
+
+    private void UpdateColliderRadiusFromMesh()
+    {
+        if (collider == null || blob == null)
+        {
+            return;
+        }
+
+        float targetRadius = GetTargetRadiusFromMesh(colliderRadius * Size);
+        collider.radius = Mathf.Max(minColliderRadius, targetRadius);
+    }
+
+    private float GetTargetRadiusFromMesh(float fallbackRadius)
+    {
+        float meshRadiusWorld = GetBlobMeshRadiusWorld();
+        float scale = GetMaxAbsScale(transform.lossyScale);
+        if (meshRadiusWorld > 0f && scale > 0f)
+        {
+            return (meshRadiusWorld / scale) * colliderRadiusMultiplier;
+        }
+
+        return fallbackRadius;
+    }
+
+    private float GetBlobMeshRadiusWorld()
+    {
+        if (blob == null)
+        {
+            return 0f;
+        }
+
+        Renderer[] renderers = blob.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0)
+        {
+            return 0f;
+        }
+
+        Bounds combined = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+        {
+            combined.Encapsulate(renderers[i].bounds);
+        }
+
+        Vector3 extents = combined.extents;
+        return Mathf.Max(extents.x, extents.y, extents.z);
     }
 
     private void UpdateCameraObstruction()
@@ -327,24 +401,30 @@ public class PlayerController : MonoBehaviour
         cameraObject.position = pivotPosition + direction * clampedDesiredDistance;
     }
 
-    private void HandleAssimilateCollision(Collider hitCollider)
+    private bool HandleAssimilateCollision(Collider hitCollider)
     {
         if (blob == null || hitCollider == null)
         {
-            return;
+            return false;
         }
 
         GameObject target = ResolveAssimilateTarget(hitCollider);
         if (target == null)
         {
-            return;
+            return false;
         }
 
         blob.ScanObjectToGrid(target);
-        blob.ApplyScanGridToMesh();
         float bestRotationDegrees;
         float score = blob.CompareToScanGrid(8, true, out bestRotationDegrees);
         Debug.Log($"Assimilate compare score: {score:F3} (best rotation {bestRotationDegrees:F1} deg) vs {target.name}");
+        if (score < assimilateSimilarityThreshold)
+        {
+            return false;
+        }
+
+        blob.ApplyScanGridToMesh();
+        return true;
     }
 
     private GameObject ResolveAssimilateTarget(Collider hitCollider)

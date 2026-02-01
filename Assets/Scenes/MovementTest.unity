@@ -480,6 +480,8 @@ MonoBehaviour:
   minHoldTime: 1.5
   maxHoldTime: 3.5
   headTurnSpeed: 0.5
+  focusTurnDuration: 2
+  focusHoldDuration: 2
   maxPitch: 70
   bodyFollowSpeed: 1.6
   bodyFollowThreshold: 40

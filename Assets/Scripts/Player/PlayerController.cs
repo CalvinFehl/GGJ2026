@@ -451,30 +451,24 @@ public class PlayerController : MonoBehaviour
         float dt = Time.fixedDeltaTime;
 
         Vector3 currentLinearVelocity = rb.linearVelocity;
-
-        bool isMoving = false;
         float speed = currentLinearVelocity.magnitude;
 
+        if (speed < movementDeadzone)
+        {
+            currentLinearVelocity = Vector3.zero;
+            rb.linearVelocity = Vector3.zero;
+        }
+
+        // Add movement force
         if (CurrentEnergyAmount > 0f)
         {
             Vector2 movement = new Vector3(moveInput.x, moveInput.y) * MoveSpeedMultiplyer;
             CurrentEnergyAmount -= movement.magnitude * energyConsumptionMultiplyer * dt;
 
-            if (speed < movementDeadzone)
-            {
-                currentLinearVelocity = Vector3.zero;
-                rb.linearVelocity = Vector3.zero;
-            }
-
-            if (speed != 0f)
-            {
-                isMoving = true;
-            }
-
             float risingSinkingForce = IsRising && IsSinking ? 0f : IsRising ? RisingSinkingMultiplier : IsSinking ? -RisingSinkingMultiplier : 0f;
 
             // Berechne die gew�nschte Bewegungsrichtung
-            Vector3 desiredDirection = (cameraPivot.transform.forward * movement.y + transform.right * movement.x + Vector3.up * risingSinkingForce * Size);
+            Vector3 desiredDirection = (cameraPivot.transform.forward * movement.y + transform.right * movement.x + Vector3.up * risingSinkingForce);
             
             if (desiredDirection.sqrMagnitude > 0.01f)
             {

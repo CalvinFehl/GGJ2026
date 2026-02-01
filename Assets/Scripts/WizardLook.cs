@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 public class WizardLook : MonoBehaviour
@@ -17,6 +18,13 @@ public class WizardLook : MonoBehaviour
     [SerializeField] private float focusTurnDuration = 2.0f;
     [SerializeField] private float focusHoldDuration = 2.0f;
     [SerializeField] private bool invertFocusDirection = true;
+
+    [Header("Alert")]
+    [SerializeField] private float playerSpeedThreshold = 0.5f;
+    [SerializeField] private float alertBlinkDuration = 2.0f;
+    [SerializeField] private float alertBlinkInterval = 0.2f;
+    [SerializeField] private Color alertColor = Color.red;
+    [SerializeField] private Light hatLight;
 
     [Header("Pitch Limits")]
     [SerializeField, Range(0f, 89f)] private float maxPitch = 70f;
@@ -49,6 +57,13 @@ public class WizardLook : MonoBehaviour
     private float focusTurnTimer;
     private float focusHoldTimer;
     private bool isFocusing;
+    private bool focusTurnComplete;
+    private bool alertTriggered;
+    private Coroutine alertRoutine;
+    private Renderer[] hatRenderers;
+    private Color[] hatRendererBaseColors;
+    private Color hatLightBaseColor = Color.white;
+    private bool hatLightBaseEnabled;
 
     private void Reset()
     {
@@ -86,6 +101,7 @@ public class WizardLook : MonoBehaviour
             bodyBaseRotation = body.rotation;
             bodyRestRelative = Quaternion.Inverse(referenceBaseRotation) * bodyBaseRotation;
         }
+        CacheHatRenderers();
         CacheHatOffsets();
         CacheHeadOffset();
     }
@@ -102,6 +118,7 @@ public class WizardLook : MonoBehaviour
     private void OnDisable()
     {
         PlayerController.PlayerTransformed -= HandlePlayerTransformed;
+        StopAlertRoutine();
     }
 
     private void Update()
@@ -125,6 +142,11 @@ public class WizardLook : MonoBehaviour
             if (focusTurnDuration <= 0f || focusTurnTimer >= focusTurnDuration)
             {
                 desiredAngles = targetAngles;
+                if (!focusTurnComplete)
+                {
+                    focusTurnComplete = true;
+                    TryTriggerAlert();
+                }
                 focusHoldTimer += Time.deltaTime;
                 if (focusHoldTimer >= focusHoldDuration)
                 {
@@ -192,6 +214,8 @@ public class WizardLook : MonoBehaviour
             return;
         }
 
+        alertTriggered = false;
+        focusTurnComplete = false;
         focusTarget = playerTransform;
         isFocusing = true;
         focusTurnTimer = 0f;
@@ -203,6 +227,7 @@ public class WizardLook : MonoBehaviour
     {
         isFocusing = false;
         focusTarget = null;
+        focusTurnComplete = false;
         PickNewTarget();
     }
 
@@ -245,6 +270,124 @@ public class WizardLook : MonoBehaviour
         }
 
         headOffsetFromBody = Quaternion.Inverse(body.rotation) * (head.position - body.position);
+    }
+
+    private void CacheHatRenderers()
+    {
+        if (hat == null)
+        {
+            return;
+        }
+
+        hatRenderers = hat.GetComponentsInChildren<Renderer>(true);
+        hatRendererBaseColors = new Color[hatRenderers.Length];
+        for (int i = 0; i < hatRenderers.Length; i++)
+        {
+            Material mat = hatRenderers[i].material;
+            hatRendererBaseColors[i] = mat != null ? mat.color : Color.white;
+        }
+
+        if (hatLight == null)
+        {
+            hatLight = hat.GetComponentInChildren<Light>(true);
+        }
+
+        if (hatLight != null)
+        {
+            hatLightBaseColor = hatLight.color;
+            hatLightBaseEnabled = hatLight.enabled;
+        }
+    }
+
+    private void TryTriggerAlert()
+    {
+        if (alertTriggered || focusTarget == null)
+        {
+            return;
+        }
+
+        float speed = GetTargetSpeed(focusTarget);
+        if (speed <= playerSpeedThreshold)
+        {
+            return;
+        }
+
+        alertTriggered = true;
+        StopAlertRoutine();
+        alertRoutine = StartCoroutine(AlertAndEndRoutine());
+    }
+
+    private float GetTargetSpeed(Transform target)
+    {
+        Rigidbody targetRb = target.GetComponentInParent<Rigidbody>();
+        if (targetRb == null)
+        {
+            targetRb = target.GetComponent<Rigidbody>();
+        }
+
+        return targetRb != null ? targetRb.linearVelocity.magnitude : 0f;
+    }
+
+    private IEnumerator AlertAndEndRoutine()
+    {
+        float elapsed = 0f;
+        bool blinkOn = false;
+        while (elapsed < alertBlinkDuration)
+        {
+            blinkOn = !blinkOn;
+            ApplyHatAlertState(blinkOn);
+            float wait = Mathf.Max(0.02f, alertBlinkInterval);
+            yield return new WaitForSeconds(wait);
+            elapsed += wait;
+        }
+
+        ApplyHatAlertState(false);
+        LoadEndSceneStub();
+        alertRoutine = null;
+    }
+
+    private void ApplyHatAlertState(bool alertOn)
+    {
+        if (hatRenderers != null)
+        {
+            for (int i = 0; i < hatRenderers.Length; i++)
+            {
+                Material mat = hatRenderers[i].material;
+                if (mat == null)
+                {
+                    continue;
+                }
+                mat.color = alertOn ? alertColor : hatRendererBaseColors[i];
+            }
+        }
+
+        if (hatLight != null)
+        {
+            if (alertOn)
+            {
+                hatLight.color = alertColor;
+                hatLight.enabled = true;
+            }
+            else
+            {
+                hatLight.color = hatLightBaseColor;
+                hatLight.enabled = hatLightBaseEnabled;
+            }
+        }
+    }
+
+    private void StopAlertRoutine()
+    {
+        if (alertRoutine != null)
+        {
+            StopCoroutine(alertRoutine);
+            alertRoutine = null;
+        }
+        ApplyHatAlertState(false);
+    }
+
+    private void LoadEndSceneStub()
+    {
     }
 
 }

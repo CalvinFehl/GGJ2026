@@ -565,7 +565,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5119643703992919275, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: scanlineLayersPerSecond
-      value: 2
+      value: 3
       objectReference: {fileID: 0}
     - target: {fileID: 5119643703992919275, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: scanUseSurfaceVoxelization

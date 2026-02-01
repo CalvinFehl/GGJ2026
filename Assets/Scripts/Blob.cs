@@ -84,10 +84,13 @@ public class Blob : MonoBehaviour
     private float lastValidatedIsoLevel = -1f;
     private InputSystem_Actions inputActions;
     private bool isRightMouseHeld;
-    private bool pauseHeld;
+    private bool scanlinePendingStart;
+    private bool scanlineBudgetInitialized;
     private float pauseBudgetRemaining;
 
     #endregion
+
+    public bool IsScanlineActive => scanlineRoutine != null;
 
     #region Matixes
     private static readonly int[,] VertexOffset =
@@ -404,8 +407,6 @@ public class Blob : MonoBehaviour
         }
 
         inputActions.Enable();
-        inputActions.Player.Jump.performed += OnJumpPerformed;
-        inputActions.Player.Jump.canceled += OnJumpCanceled;
         inputActions.Player.Toggle.started += OnToggleShape;
         inputActions.Player.Morph.performed += OnScanModePerformed;
         inputActions.Player.Morph.canceled += OnScanModeCanceled;
@@ -418,8 +419,6 @@ public class Blob : MonoBehaviour
             return;
         }
 
-        inputActions.Player.Jump.performed -= OnJumpPerformed;
-        inputActions.Player.Jump.canceled -= OnJumpCanceled;
         inputActions.Player.Toggle.started -= OnToggleShape;
         inputActions.Player.Morph.performed -= OnScanModePerformed;
         inputActions.Player.Morph.canceled -= OnScanModeCanceled;
@@ -430,6 +429,7 @@ public class Blob : MonoBehaviour
     {
         HandleScanlineInput();
         UpdateScanlinePreviewLive();
+        UpdateScanlineHoldBudget();
     }
 
     private void Start()
@@ -450,7 +450,7 @@ public class Blob : MonoBehaviour
 
     private void HandleScanlineInput()
     {
-        if (!isRightMouseHeld || inputActions == null)
+        if (!(isRightMouseHeld || scanlineRoutine != null) || inputActions == null)
         {
             return;
         }
@@ -484,6 +484,27 @@ public class Blob : MonoBehaviour
         Vector2 halfExtents = GetScanlineHalfExtents();
         Vector2 center = new Vector2((size.x - 1) * 0.5f, (size.z - 1) * 0.5f);
         UpdateScanlinePreview(layer, center, halfExtents);
+    }
+
+    private void UpdateScanlineHoldBudget()
+    {
+        if (!isRightMouseHeld || scanlineRoutine != null || !scanlinePendingStart)
+        {
+            return;
+        }
+
+        EnsureScanlineBudgetInitialized();
+        if (pauseBudgetRemaining <= 0f)
+        {
+            StartScanline();
+            return;
+        }
+
+        pauseBudgetRemaining = Mathf.Max(0f, pauseBudgetRemaining - Time.deltaTime);
+        if (pauseBudgetRemaining <= 0f)
+        {
+            StartScanline();
+        }
     }
 
 
@@ -644,7 +665,8 @@ public class Blob : MonoBehaviour
             return;
         }
 
-        pauseBudgetRemaining = scanlinePauseBudgetSeconds;
+        EnsureScanlineBudgetInitialized();
+        scanlinePendingStart = false;
         scanlineRoutine = StartCoroutine(ScanlineRoutine());
     }
 
@@ -1246,6 +1268,7 @@ public class Blob : MonoBehaviour
     private IEnumerator ScanlineRoutine()
     {
         EnsureGrid();
+        EnsureScanlineBudgetInitialized();
         float delay = 1f / Mathf.Max(0.01f, scanlineLayersPerSecond);
 
         for (int y = 0; y < size.y; y++)
@@ -1271,6 +1294,9 @@ public class Blob : MonoBehaviour
 
         scanlineRoutine = null;
         scanlineCurrentLayer = -1;
+        scanlinePendingStart = false;
+        scanlineBudgetInitialized = false;
+        pauseBudgetRemaining = 0f;
         HideScanlinePreviews();
     }
 
@@ -1279,7 +1305,7 @@ public class Blob : MonoBehaviour
         float remaining = delay;
         while (remaining > 0f)
         {
-            if (pauseHeld && pauseBudgetRemaining > 0f)
+            if (isRightMouseHeld && pauseBudgetRemaining > 0f)
             {
                 float dt = Time.deltaTime;
                 pauseBudgetRemaining = Mathf.Max(0f, pauseBudgetRemaining - dt);
@@ -1351,22 +1377,6 @@ public class Blob : MonoBehaviour
         }
     }
 
-    private void OnJumpPerformed(InputAction.CallbackContext context)
-    {
-        if (scanlineRoutine == null)
-        {
-            StartScanline();
-            return;
-        }
-
-        pauseHeld = true;
-    }
-
-    private void OnJumpCanceled(InputAction.CallbackContext context)
-    {
-        pauseHeld = false;
-    }
-
     private void OnToggleShape(InputAction.CallbackContext context)
     {
         scanlineShape = scanlineShape == ScanlineShape.Cube ? ScanlineShape.Cylinder : ScanlineShape.Cube;
@@ -1375,11 +1385,32 @@ public class Blob : MonoBehaviour
     private void OnScanModePerformed(InputAction.CallbackContext context)
     {
         isRightMouseHeld = true;
+        if (scanlineRoutine == null)
+        {
+            scanlinePendingStart = true;
+            EnsureScanlineBudgetInitialized();
+        }
     }
 
     private void OnScanModeCanceled(InputAction.CallbackContext context)
     {
         isRightMouseHeld = false;
+        if (scanlineRoutine == null && scanlinePendingStart)
+        {
+            StartScanline();
+            scanlinePendingStart = false;
+        }
+    }
+
+    private void EnsureScanlineBudgetInitialized()
+    {
+        if (scanlineBudgetInitialized)
+        {
+            return;
+        }
+
+        pauseBudgetRemaining = scanlinePauseBudgetSeconds;
+        scanlineBudgetInitialized = true;
     }
 
     private float GetScanlineVoxelValue(int x, int z, Vector2 center, Vector2 halfExtents)

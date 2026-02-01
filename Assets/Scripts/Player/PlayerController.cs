@@ -497,7 +497,7 @@ public class PlayerController : MonoBehaviour
 
     private void HandleCameraInput()
     {
-        if (cameraPivot == null || IsMorphing) return;
+        if (cameraPivot == null || IsMorphing || (blob != null && blob.IsScanlineActive)) return;
 
         float dt = Time.fixedDeltaTime;
         Quaternion originalRotation = rb != null ? rb.rotation : transform.rotation;

@@ -1770,7 +1770,8 @@ public class Blob : MonoBehaviour
 
         int filledCount = CountFilledVoxels(voxels, isoLevel);
         int scanFilledCount = CountFilledVoxels(scanVoxels, isoLevel);
-        return Mathf.Abs(filledCount - scanFilledCount) / (float)totalVoxels;
+        float diff = Mathf.Abs(filledCount - scanFilledCount) / (float)totalVoxels;
+        return Mathf.Clamp01(1f - diff);
     }
 
     private float ComputeSimilarity(float rotationDegrees, float scale, int yOffset, bool includeColors)
@@ -1783,7 +1784,8 @@ public class Blob : MonoBehaviour
 
         int filledCount = CountFilledVoxels(voxels, isoLevel);
         int scanFilledCount = CountFilledVoxels(scanVoxels, isoLevel);
-        return Mathf.Abs(filledCount - scanFilledCount) / (float)totalVoxels;
+        float diff = Mathf.Abs(filledCount - scanFilledCount) / (float)totalVoxels;
+        return Mathf.Clamp01(1f - diff);
     }
 
     private int CountFilledVoxels(float[,,] grid, float threshold)

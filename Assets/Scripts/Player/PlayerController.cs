@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class PlayerController : MonoBehaviour
 {
@@ -19,7 +20,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float colliderRadiusMultiplier = 1f;
     [SerializeField] private float minColliderRadius = 0.05f;
     [SerializeField] private float growDuration = 2f;
-    private float assimilateSimilarityThreshold = 0.2f;
+    private float assimilateSimilarityThreshold = 0.8f;
     private SphereCollider collider;
     private Vector3 desiredCameraLocalPosition;
 
@@ -42,6 +43,8 @@ public class PlayerController : MonoBehaviour
     [SerializeField] public float Size = 1f;
     [SerializeField] private float energyConsumptionMultiplyer = 1f;
     [SerializeField] private float growthDamping = 0.2f;
+    private float winSizeThreshold = 0.8f;
+    private bool winTriggered;
 
     [Header("Graphic Object Settings")]
     [SerializeField] private float reorientationMultiplyer = 5f;
@@ -57,6 +60,8 @@ public class PlayerController : MonoBehaviour
     private InputSystem_Actions inputActions;
     private Vector2 moveInput;
     private Vector2 lookInput;
+    private readonly System.Collections.Generic.HashSet<int> alertedAssimilateColliders =
+        new System.Collections.Generic.HashSet<int>();
 
 
     #endregion
@@ -149,12 +154,40 @@ public class PlayerController : MonoBehaviour
 
     private void OnCollisionEnter(Collision collision)
     {
-        if (!collision.collider.CompareTag("Assimilateable"))
+        TryHandleAssimilateCollision(collision.collider);
+    }
+
+    private void OnCollisionStay(Collision collision)
+    {
+        TryHandleAssimilateCollision(collision.collider);
+    }
+
+    private void OnCollisionExit(Collision collision)
+    {
+        if (collision.collider == null)
         {
             return;
         }
 
-        Assimilateable assimilateable = collision.collider.GetComponentInParent<Assimilateable>();
+        alertedAssimilateColliders.Remove(collision.collider.GetInstanceID());
+    }
+
+    private void TryHandleAssimilateCollision(Collider collider)
+    {
+        if (collider == null || !collider.CompareTag("Assimilateable"))
+        {
+            return;
+        }
+
+        int colliderId = collider.GetInstanceID();
+        if (alertedAssimilateColliders.Contains(colliderId))
+        {
+            return;
+        }
+
+        alertedAssimilateColliders.Add(colliderId);
+
+        Assimilateable assimilateable = collider.GetComponentInParent<Assimilateable>();
         if (assimilateable == null)
         {
             return;
@@ -166,12 +199,15 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        if (HandleAssimilateCollision(collision.collider))
+        PlayerTransformed?.Invoke(transform);
+
+        if (HandleAssimilateCollision(collider))
         {
-            GrowInSize(GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume));
+            float targetSize = GetTargetSizeFromAssimilateable(assimilateable.Volume, blobVolume);
+            Debug.Log($"New size: {targetSize:0.###}");
+            GrowInSize(targetSize);
             Destroy(assimilateable.gameObject);
             PlaySoundOneShot(assimilateSound);
-            PlayerTransformed?.Invoke(transform);
         }
     }
 
@@ -255,6 +291,7 @@ public class PlayerController : MonoBehaviour
             Size = Mathf.Lerp(startSize, targetSize, t);
             
             UpdateComponentSizes(Size);
+            CheckWinCondition();
 
             yield return null;
         }
@@ -262,6 +299,21 @@ public class PlayerController : MonoBehaviour
         // Ensure we reach exact target size
         Size = targetSize;
         UpdateComponentSizes(Size);
+        CheckWinCondition();
+    }
+
+    private void CheckWinCondition()
+    {
+        if (winTriggered)
+        {
+            return;
+        }
+
+        if (Size > winSizeThreshold)
+        {
+            winTriggered = true;
+            SceneManager.LoadScene("WinScreen");
+        }
     }
 
     private void UpdateComponentSizes(float newSize)
@@ -427,12 +479,13 @@ public class PlayerController : MonoBehaviour
         float bestRotationDegrees;
         float score = blob.CompareToScanGrid(8, true, out bestRotationDegrees);
         Debug.Log($"Assimilate compare score: {score:F3} (best rotation {bestRotationDegrees:F1} deg) vs {target.name}");
-        if (score > assimilateSimilarityThreshold)
+        if (score < assimilateSimilarityThreshold)
         {
             return false;
         }
 
-        blob.ApplyScanGridToMesh();
+        blob.ApplyScanColorsToGrid();
+        blob.RebuildMesh();
         return true;
     }
 

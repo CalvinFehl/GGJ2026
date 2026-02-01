@@ -65,6 +65,7 @@ public class WizardLook : MonoBehaviour
     private Coroutine alertRoutine;
     private bool isBlinking;
     private bool alertTriggered;
+    private bool holdEntered;
     private Renderer[] hatRenderers;
     private Color[] hatRendererBaseColors;
     private Color hatLightBaseColor = Color.white;
@@ -155,7 +156,15 @@ public class WizardLook : MonoBehaviour
             if (turnComplete)
             {
                 desiredAngles = targetAngles;
-                UpdateHoldAlertState();
+                if (!holdEntered)
+                {
+                    holdEntered = true;
+                    UpdateHoldAlertState(false);
+                }
+                else
+                {
+                    UpdateHoldAlertState(true);
+                }
                 focusHoldTimer += Time.deltaTime;
                 if (focusHoldTimer >= focusHoldDuration)
                 {
@@ -225,6 +234,7 @@ public class WizardLook : MonoBehaviour
         }
 
         alertTriggered = false;
+        holdEntered = false;
         focusTarget = playerTransform;
         isFocusing = true;
         focusTurnTimer = 0f;
@@ -241,6 +251,7 @@ public class WizardLook : MonoBehaviour
             return;
         }
 
+        holdEntered = false;
         StopAlertRoutine(false);
         PickNewTarget();
     }
@@ -335,14 +346,14 @@ public class WizardLook : MonoBehaviour
         ApplyHatAlertState(true);
     }
 
-    private void UpdateHoldAlertState()
+    private void UpdateHoldAlertState(bool allowBlink)
     {
         if (alertTriggered)
         {
             return;
         }
 
-        if (IsTargetMovingTooFast())
+        if (allowBlink && IsTargetMovingTooFast())
         {
             alertTriggered = true;
             

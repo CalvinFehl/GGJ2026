@@ -15,6 +15,8 @@ public class Blob : MonoBehaviour
         Cylinder
     }
 
+    #region Variables
+
     public const int MaxSize = 64;
 
     [Header("Voxel Grid")]
@@ -85,6 +87,9 @@ public class Blob : MonoBehaviour
     private bool pauseHeld;
     private float pauseBudgetRemaining;
 
+    #endregion
+
+    #region Matixes
     private static readonly int[,] VertexOffset =
     {
         {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
@@ -378,6 +383,10 @@ public class Blob : MonoBehaviour
         {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}
     };
 
+    #endregion
+
+    #region Monobehaviour Methods
+
     private void Awake()
     {
         meshFilter = GetComponent<MeshFilter>();
@@ -397,9 +406,9 @@ public class Blob : MonoBehaviour
         inputActions.Enable();
         inputActions.Player.Jump.performed += OnJumpPerformed;
         inputActions.Player.Jump.canceled += OnJumpCanceled;
-        inputActions.Player.Interact.started += OnToggleShape;
-        inputActions.Player.ScanMode.performed += OnScanModePerformed;
-        inputActions.Player.ScanMode.canceled += OnScanModeCanceled;
+        inputActions.Player.Toggle.started += OnToggleShape;
+        inputActions.Player.Morph.performed += OnScanModePerformed;
+        inputActions.Player.Morph.canceled += OnScanModeCanceled;
     }
 
     private void OnDisable()
@@ -411,9 +420,9 @@ public class Blob : MonoBehaviour
 
         inputActions.Player.Jump.performed -= OnJumpPerformed;
         inputActions.Player.Jump.canceled -= OnJumpCanceled;
-        inputActions.Player.Interact.started -= OnToggleShape;
-        inputActions.Player.ScanMode.performed -= OnScanModePerformed;
-        inputActions.Player.ScanMode.canceled -= OnScanModeCanceled;
+        inputActions.Player.Toggle.started -= OnToggleShape;
+        inputActions.Player.Morph.performed -= OnScanModePerformed;
+        inputActions.Player.Morph.canceled -= OnScanModeCanceled;
         inputActions.Disable();
     }
 
@@ -422,6 +431,22 @@ public class Blob : MonoBehaviour
         HandleScanlineInput();
         UpdateScanlinePreviewLive();
     }
+
+    private void Start()
+    {
+        if (!generateOnStart)
+        {
+            return;
+        }
+
+        if (fillSolidOnStart)
+        {
+            FillSphere();
+        }
+
+        RebuildMesh();
+    }
+    #endregion
 
     private void HandleScanlineInput()
     {
@@ -461,20 +486,6 @@ public class Blob : MonoBehaviour
         UpdateScanlinePreview(layer, center, halfExtents);
     }
 
-    private void Start()
-    {
-        if (!generateOnStart)
-        {
-            return;
-        }
-
-        if (fillSolidOnStart)
-        {
-            FillSphere();
-        }
-
-        RebuildMesh();
-    }
 
     private void OnValidate()
     {

@@ -33,7 +33,7 @@ public class PlayerController : MonoBehaviour
 
     [SerializeField] public float BrakeStrength = 0.1f;
     private bool IsBraking = false;
-    private bool IsScanning = false;
+    private bool IsMorphing = false;
     private bool IsRising = false;
     private bool IsSinking = false;
 
@@ -94,16 +94,14 @@ public class PlayerController : MonoBehaviour
     {
         inputActions.Enable();
 
-        inputActions.Player.Crouch.performed += ctx => IsBraking = true;
-        inputActions.Player.Crouch.canceled += ctx => IsBraking = false;
-        inputActions.Player.ScanMode.performed += ctx => IsScanning = true;
-        inputActions.Player.ScanMode.canceled += ctx => IsScanning = false;
+        inputActions.Player.Morph.performed += ctx => IsMorphing = true;
+        inputActions.Player.Morph.canceled += ctx => IsMorphing = false;
+        inputActions.Player.Brake.performed += ctx => IsBraking = true;
+        inputActions.Player.Brake.canceled += ctx => IsBraking = false;
         inputActions.Player.Rise.performed += ctx => IsRising = true;
         inputActions.Player.Rise.canceled += ctx => IsRising = false;
         inputActions.Player.Sink.performed += ctx => IsSinking = true;
         inputActions.Player.Sink.canceled += ctx => IsSinking = false;
-
-        inputActions.Player.Interact.performed += ctx => Interact();
 
     }
 
@@ -505,7 +503,7 @@ public class PlayerController : MonoBehaviour
 
     private void HandleCameraInput()
     {
-        if (cameraPivot == null || IsScanning) return;
+        if (cameraPivot == null || IsMorphing) return;
 
         float dt = Time.fixedDeltaTime;
         Quaternion originalRotation = rb != null ? rb.rotation : transform.rotation;
@@ -547,52 +545,6 @@ public class PlayerController : MonoBehaviour
         if (rb == null) return;
         rb.linearVelocity = Vector3.Lerp(rb.linearVelocity, Vector3.zero, BrakeStrength * Time.deltaTime);
         rb.angularVelocity = Vector3.Lerp(rb.angularVelocity, Vector3.zero, BrakeStrength * Time.deltaTime);
-    }
-    #endregion
-
-    #region Interaction Methods
-    private void Interact()
-    {
-        if(Physics.SphereCast(transform.position, Size, transform.forward, out RaycastHit hitInfo, 2f))
-        {
-            switch (hitInfo.collider.tag)
-            {
-                case "Collectible":
-                    HandleCollectibleInteraction(hitInfo.collider.gameObject);
-                    break;
-                case "Enemy":
-                    HandleEnemyInteraction(hitInfo.collider.gameObject);
-                    break;
-                case "Item":
-                    HandleItemInteraction(hitInfo.collider.gameObject);
-                    break;
-                default:
-                    Debug.Log("No valid interaction found.");
-                    break;
-            }
-        }
-    }
-
-    private void HandleCollectibleInteraction(GameObject collectible)
-    {
-        // Energie vom Collectible aufnehmen
-        Debug.Log($"Collected: {collectible.name}");
-        // Beispiel: CurrentEnergyAmount += 10f;
-        Destroy(collectible);
-    }
-
-    private void HandleEnemyInteraction(GameObject enemy)
-    {
-        // Interaktion mit Gegner
-        Debug.Log($"Interacting with enemy: {enemy.name}");
-        // Beispiel: CurrentEnergyAmount -= 5f;
-    }
-
-    private void HandleItemInteraction(GameObject item)
-    {
-        // Interaktion mit Item
-        Debug.Log($"Picked up item: {item.name}");
-        // Beispiel: Item ins Inventar aufnehmen
     }
     #endregion
 }

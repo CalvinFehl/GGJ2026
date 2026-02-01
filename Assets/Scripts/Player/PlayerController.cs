@@ -19,7 +19,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float colliderRadiusMultiplier = 1f;
     [SerializeField] private float minColliderRadius = 0.05f;
     [SerializeField] private float growDuration = 2f;
-    private float assimilateSimilarityThreshold = 0.8f;
+    private float assimilateSimilarityThreshold = 0.2f;
     private SphereCollider collider;
     private Vector3 desiredCameraLocalPosition;
 
@@ -416,7 +416,7 @@ public class PlayerController : MonoBehaviour
         float bestRotationDegrees;
         float score = blob.CompareToScanGrid(8, true, out bestRotationDegrees);
         Debug.Log($"Assimilate compare score: {score:F3} (best rotation {bestRotationDegrees:F1} deg) vs {target.name}");
-        if (score < assimilateSimilarityThreshold)
+        if (score > assimilateSimilarityThreshold)
         {
             return false;
         }

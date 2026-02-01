@@ -16,6 +16,7 @@ public class WizardLook : MonoBehaviour
     [Header("Player Focus")]
     [SerializeField] private float focusTurnDuration = 2.0f;
     [SerializeField] private float focusHoldDuration = 2.0f;
+    [SerializeField] private bool invertFocusDirection = true;
 
     [Header("Pitch Limits")]
     [SerializeField, Range(0f, 89f)] private float maxPitch = 70f;
@@ -214,6 +215,11 @@ public class WizardLook : MonoBehaviour
         }
 
         Vector3 dirRef = Quaternion.Inverse(referenceBaseRotation) * toTarget.normalized;
+        if (invertFocusDirection)
+        {
+            dirRef.x = -dirRef.x;
+            dirRef.z = -dirRef.z;
+        }
         float pitch = Mathf.Asin(Mathf.Clamp(dirRef.y, -1f, 1f)) * Mathf.Rad2Deg;
         pitch = Mathf.Clamp(pitch, -maxPitch, maxPitch);
         float yaw = Mathf.Atan2(dirRef.x, dirRef.z) * Mathf.Rad2Deg;

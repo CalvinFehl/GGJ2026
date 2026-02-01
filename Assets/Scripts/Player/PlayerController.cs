@@ -19,7 +19,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float colliderRadiusMultiplier = 1f;
     [SerializeField] private float minColliderRadius = 0.05f;
     [SerializeField] private float growDuration = 2f;
-    [SerializeField, Range(0f, 1f)] private float assimilateSimilarityThreshold = 0.6f;
+    private float assimilateSimilarityThreshold = 0.8f;
     private SphereCollider collider;
     private Vector3 desiredCameraLocalPosition;
 

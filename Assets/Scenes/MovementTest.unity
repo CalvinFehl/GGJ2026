@@ -829,7 +829,7 @@ PrefabInstance:
     - target: {fileID: 8165669201101177192, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: growSound
       value: 
-      objectReference: {fileID: 8300000, guid: 3af1b94b1312c3244a458ddf4eb14983, type: 3}
+      objectReference: {fileID: 8300000, guid: 23caa0e4aeae96546b9bf26b83e4973d, type: 3}
     - target: {fileID: 8165669201101177192, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: morphSound
       value: 
@@ -845,11 +845,11 @@ PrefabInstance:
     - target: {fileID: 8165669201101177192, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: assimilateSound
       value: 
-      objectReference: {fileID: 8300000, guid: c5a14f573f908774193a7732197e978c, type: 3}
+      objectReference: {fileID: 8300000, guid: dd1bf199c26eb8c41b34ce2e0db51e7c, type: 3}
     - target: {fileID: 8165669201101177192, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: engineStartSound
       value: 
-      objectReference: {fileID: 8300000, guid: 2f390367246de204ba9b730a0b7dadc8, type: 3}
+      objectReference: {fileID: 8300000, guid: e728679fb74e923449ba9b1a9335d6a0, type: 3}
     - target: {fileID: 8165669201101177192, guid: ab917ce20e202c14584b997eb0038df0, type: 3}
       propertyPath: LookSensitivityMultiplyer
       value: 50

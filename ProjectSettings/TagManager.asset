@@ -5,6 +5,7 @@ TagManager:
   serializedVersion: 3
   tags:
   - Assimilateable
+  - nofood
   layers:
   - Default
   - TransparentFX
